@@ -1,38 +1,11 @@
-# Netlify: React build on the CDN + the Express API as a serverless function.
-# Set OMNI_SECRET in Site settings -> Environment variables (any long random
-# string) so every function instance can check Omni ID challenges.
+# Netlify: a single static app — no functions, no server API.
 
 [build]
-  command = "npm run build:netlify"
+  command = "npm run build"
   publish = "dist"
-  functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "22"
-
-[functions]
-  node_bundler = "esbuild"
-  # Ship these CommonJS packages as node_modules instead of bundling them into ESM.
-  external_node_modules = ["express", "serverless-http"]
-
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/api/:splat"
-  status = 200
-  force = true
-
-# MediaPipe models, proxied so the page stays same-origin (CSP connect-src 'self').
-[[redirects]]
-  from = "/models/hand_landmarker.task"
-  to = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/models/blaze_face_short_range.tflite"
-  to = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
-  status = 200
-  force = true
 
 # Single-page app fallback.
 [[redirects]]
@@ -43,10 +16,10 @@
 [[headers]]
   for = "/*"
   [headers.values]
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' https://storage.googleapis.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "no-referrer"
-    Permissions-Policy = "camera=(self), microphone=(self), geolocation=()"
+    Permissions-Policy = "camera=(self), microphone=(self), geolocation=(), xr-spatial-tracking=(self)"
     Cross-Origin-Opener-Policy = "same-origin"
 
 [[headers]]

@@ -6,6 +6,7 @@ export const DEFAULT_PREFS = Object.freeze({
   twinName: 'Omni',
   twinColor: '#22d3ee',
   twinShape: 'orb', // orb | bot | spark
+  arMode: '3d', // 3d (three.js over the camera, any device) | 2d (canvas overlay)
   motto: 'Digital detox, healthy habits.',
   speech: true,
   voiceRate: 1,
@@ -35,6 +36,7 @@ export function sanitizePrefs(p = {}) {
     twinName: str(p.twinName, 24, d.twinName),
     twinColor: /^#[0-9a-f]{6}$/i.test(p.twinColor ?? '') ? p.twinColor.toLowerCase() : d.twinColor,
     twinShape: pick(p.twinShape, ['orb', 'bot', 'spark'], d.twinShape),
+    arMode: pick(p.arMode, ['3d', '2d'], d.arMode),
     motto: str(p.motto, 80, d.motto),
     speech: bool(p.speech, d.speech),
     voiceRate: clamp(p.voiceRate, 0.5, 2, d.voiceRate),

@@ -1,26 +1,28 @@
-# Render Blueprint: one Node web service running Express (API + React build).
-# New -> Blueprint -> pick this repo. Render supplies PORT and HTTPS.
+# Render Blueprint: a single static site — no server API.
+# New -> Blueprint -> pick this repo. Render serves it over HTTPS from its CDN.
 services:
   - type: web
     name: omni-ar-twin
-    runtime: node
-    plan: free
+    runtime: static
     buildCommand: npm ci && npm run build
-    startCommand: npm start
-    healthCheckPath: /api/health
-    autoDeploy: true
+    staticPublishPath: dist
     envVars:
       - key: NODE_VERSION
         value: "22"
-      - key: HOST
-        value: 0.0.0.0
-      # One proxy hop (Render's load balancer) so rate limits see real client IPs.
-      - key: TRUST_PROXY
-        value: "1"
-      # Signs Omni ID login challenges; generated once by Render.
-      - key: OMNI_SECRET
-        generateValue: true
-      # Identity registry file. The free plan's disk is ephemeral; attach a
-      # persistent disk (paid) and point this at it to keep registrations.
-      - key: OMNI_DATA_DIR
-        value: /opt/render/project/src/server/data
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' https://storage.googleapis.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(self), microphone=(self), geolocation=(), xr-spatial-tracking=(self)

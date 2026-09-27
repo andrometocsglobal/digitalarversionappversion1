@@ -88,6 +88,22 @@ export async function verifyPassport(passport) {
   }
 }
 
+// ------------------------------------------------ signing arbitrary records
+
+/** Sign any JSON record (canonicalised) with an Omni ID private key. */
+export async function signRecord(privateKey, record) {
+  return signBytes(privateKey, enc.encode(canonicalize(record)));
+}
+
+export async function verifyRecord(publicKey, record, signature) {
+  try {
+    const key = await crypto.subtle.importKey('jwk', { ...publicJwkOf(publicKey), ext: true }, ECDSA, false, ['verify']);
+    return await crypto.subtle.verify(SIGN, key, fromBase64Url(String(signature)), enc.encode(canonicalize(record)));
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------- challenge / proof
 
 export const challengeMessage = (id, nonce) => enc.encode(`omni-id-login:${id}:${nonce}`);

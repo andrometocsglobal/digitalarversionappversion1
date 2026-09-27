@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { solve, apFormula } from '@shared/omni/index.js';
-import { getJSON, postJSON } from '../lib/api.js';
+import { solve, apFormula, verifyAll } from '@shared/omni/index.js';
 
 const FIELDS = {
   ap: [['F', '3'], ['L', '7'], ['p', '3']],
@@ -38,24 +37,34 @@ export default function OmniLab({ lastVoiceResult }) {
       return { F: m[1], L: m[2], p: Number(m[3] ?? 0) };
     });
 
-  const compute = async (where) => {
+  const compute = async () => {
     setError(null);
     setBrute(null);
     try {
       let r;
       if (kind === 'lattice') {
         const body = { dims: parsedDims() };
-        r = where === 'server' ? await postJSON('/api/omni/lattice', body) : solve('lattice', body);
+        r = solve('lattice', body);
       } else {
         const p = vals[kind];
-        r = where === 'server' ? await getJSON(`/api/omni/${kind}?${new URLSearchParams(p)}`) : solve(kind, p);
+        r = solve(kind, p);
         const X = BigInt(p.L ?? 0) - BigInt(p.F ?? 0) + 1n;
         if (kind !== 'gp' && X > 0n && X <= 20_000_000n) setBrute(bruteMs(kind, p));
       }
-      setResult({ ...r, where });
+      setResult(r);
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  const runVerify = () => {
+    setVerify({ running: true });
+    // Let the button repaint before the (≈1 s) exhaustive run.
+    setTimeout(() => {
+      const t0 = performance.now();
+      const r = verifyAll({ ap: { maxL: 16, maxPower: 10 }, hp: { maxL: 24, maxPower: 12 } });
+      setVerify({ ...r, ms: Math.round(performance.now() - t0), results: r.results.map(({ failures, ...rest }) => ({ ...rest, failures: failures.length })) });
+    }, 30);
   };
 
   const shown = lastVoiceResult && !result ? lastVoiceResult : result;
@@ -93,9 +102,8 @@ export default function OmniLab({ lastVoiceResult }) {
         <p className="formula">D<sup>{vals.ap.p}</sup> = {apFormula(Number(vals.ap.p))}</p>
       )}
       <div className="button-row">
-        <button className="primary" onClick={() => compute('browser')} data-testid="lab-run">Compute in browser</button>
-        <button onClick={() => compute('server')} data-testid="lab-run-server">Compute on server</button>
-        <button className="ghost" onClick={async () => setVerify(await getJSON('/api/omni/verify').catch((e) => ({ error: e.message })))} data-testid="lab-verify">
+        <button className="primary" onClick={compute} data-testid="lab-run">Compute</button>
+        <button className="ghost" onClick={runVerify} data-testid="lab-verify">
           Run verification suite
         </button>
       </div>
@@ -110,15 +118,15 @@ export default function OmniLab({ lastVoiceResult }) {
             <dt>Space</dt><dd>{shown.space}</dd>
             <dt>Terms</dt><dd>{shorten(shown.terms)}</dd>
             <dt>Exact</dt><dd>{shown.exact ? 'yes (BigInt rational)' : 'no — double, ~1e-15 relative'}</dd>
-            <dt>Took</dt><dd>{shown.ms} ms {shown.where ? `(${shown.where})` : ''}</dd>
+            <dt>Took</dt><dd>{shown.ms} ms (in your browser)</dd>
             {brute && (<><dt>Brute force</dt><dd>{brute.ms.toFixed(2)} ms looping in doubles</dd></>)}
           </dl>
         </div>
       )}
       {verify && (
         <div className="result" data-testid="lab-verify-result">
-          {verify.error ? (
-            <p className="error">{verify.error}</p>
+          {verify.running ? (
+            <p>Running the exhaustive suite…</p>
           ) : (
             <p>
               <b>{verify.cases.toLocaleString()}</b> closed-form vs brute-force cases, <b data-testid="lab-failures">{verify.failures}</b> failures ({verify.ms} ms).{' '}

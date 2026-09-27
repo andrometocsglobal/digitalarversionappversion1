@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { makeHand, POSES, countPose } from '@shared/hands/synthetic.js';
+import { MODEL_URLS } from '@shared/platform.js';
 
 // Hand + face tracking on the live video. Results live in a ref (no React
 // re-render per frame); onFrame is called once per processed frame.
@@ -24,8 +25,8 @@ async function loadMediaPipe() {
     }
   };
   const [hands, face] = await Promise.all([
-    withFallback(HandLandmarker, { baseOptions: { modelAssetPath: '/models/hand_landmarker.task' }, numHands: 2, minHandDetectionConfidence: 0.6 }),
-    withFallback(FaceDetector, { baseOptions: { modelAssetPath: '/models/blaze_face_short_range.tflite' }, minDetectionConfidence: 0.5 }).catch(() => null),
+    withFallback(HandLandmarker, { baseOptions: { modelAssetPath: MODEL_URLS.hand }, numHands: 2, minHandDetectionConfidence: 0.6 }),
+    withFallback(FaceDetector, { baseOptions: { modelAssetPath: MODEL_URLS.face }, minDetectionConfidence: 0.5 }).catch(() => null),
   ]);
   return { hands, face };
 }

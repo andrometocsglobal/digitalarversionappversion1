@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { fromBase64Url } from '@shared/security/arVerify.js';
+import { verifyPassport } from '@shared/identity/omniId.js';
 
 /** A unique visual signature derived from the identity's key thumbprint. */
 export function SignatureGlyph({ id, color, size = 96 }) {
@@ -27,12 +28,14 @@ export function SignatureGlyph({ id, color, size = 96 }) {
   );
 }
 
-export default function IdentityPanel({ idState, prefs }) {
+export default function IdentityPanel({ idState, prefs, initialBundle = '' }) {
   const { identity, status, create, refreshProfile, proveOwnership, backup, restore, forget, setStatus } = idState;
   const [pass, setPass] = useState('');
-  const [bundleText, setBundleText] = useState('');
+  const [bundleText, setBundleText] = useState(initialBundle);
   const [busy, setBusy] = useState(false);
   const [confirmForget, setConfirmForget] = useState(false);
+  const [checkText, setCheckText] = useState('');
+  const [checkResult, setCheckResult] = useState('');
 
   const run = (fn) => async () => {
     setBusy(true);
@@ -45,11 +48,12 @@ export default function IdentityPanel({ idState, prefs }) {
     }
   };
 
-  const download = (bundle) => {
-    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+  const download = (obj, kind = 'backup') => {
+    const id = obj.passport?.id ?? obj.id;
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `omni-id-${bundle.passport.id.slice(0, 8)}.json`;
+    a.download = kind === 'passport' ? `omni-passport-${id.slice(0, 8)}.json` : `omni-id-${id.slice(0, 8)}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
@@ -58,7 +62,8 @@ export default function IdentityPanel({ idState, prefs }) {
     <section className="panel" aria-labelledby="id-h">
       <h2 id="id-h">Omni ID — one person, one AR twin</h2>
       <p className="muted">
-        Create your signed AR identity once, then carry it to any device with an encrypted backup. Your private key never leaves this device unencrypted.
+        Create your signed AR identity once, then carry it to any device with an encrypted JSON backup. Everything happens on this device — no
+        server. Your private key never leaves it unencrypted.
       </p>
 
       {status.state === 'loading' && <p>Loading…</p>}
@@ -111,6 +116,37 @@ export default function IdentityPanel({ idState, prefs }) {
           </button>
         </>
       )}
+
+      {identity && (
+        <>
+          <h3>Share your public passport</h3>
+          <p className="muted">Anyone can verify it offline — it contains no private key.</p>
+          <button onClick={() => download(identity.passport, 'passport')} data-testid="export-passport">Export passport JSON</button>
+        </>
+      )}
+
+      <h3>Verify a passport</h3>
+      <div className="form">
+        <label>Passport JSON
+          <textarea rows={3} value={checkText} onChange={(e) => setCheckText(e.target.value)} placeholder='{"schema":"omni-id-passport/1", …}' data-testid="verify-passport-input" />
+        </label>
+      </div>
+      <button
+        disabled={!checkText}
+        onClick={async () => {
+          try {
+            const p = JSON.parse(checkText);
+            const v = await verifyPassport(p);
+            setCheckResult(v.ok ? `✅ Valid passport of ${p.profile.displayName} (twin ${p.profile.twinName}), id ${p.id.slice(0, 12)}…` : `❌ Invalid: ${v.reason}`);
+          } catch {
+            setCheckResult('❌ Not valid JSON');
+          }
+        }}
+        data-testid="verify-passport"
+      >
+        Verify
+      </button>
+      {checkResult && <p className="notice" data-testid="verify-passport-result">{checkResult}</p>}
 
       <h3>Import on this device</h3>
       <div className="form">

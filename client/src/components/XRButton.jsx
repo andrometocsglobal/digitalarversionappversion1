@@ -47,9 +47,9 @@ export default function XRButton({ getState, enabled }) {
         disabled={!supported || !enabled}
         onClick={enter}
         data-testid="xr-button"
-        title={supported ? 'Place your twin in your real room' : 'Needs Chrome on an ARCore Android device over https'}
+        title={supported ? 'Place your twin on real surfaces in your room' : '3D Web AR already works here; room-scale surface AR needs an ARCore Android phone with Chrome over https'}
       >
-        {supported === null ? 'Checking AR…' : supported ? '🕶️ Enter real AR' : 'Real AR: Android + Chrome only'}
+        {supported === null ? 'Checking room AR…' : supported ? '🕶️ Room-scale AR' : 'Room AR: ARCore phones only'}
       </button>
       {info && !active && <small className="muted">{info}</small>}
       <div ref={overlay} className={`xr-overlay ${active ? 'on' : ''}`}>

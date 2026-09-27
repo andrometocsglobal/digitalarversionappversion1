@@ -27,9 +27,9 @@ export default defineConfig({
     { name: 'mobile', use: { ...devices['Pixel 7'], ...media }, grep: /@mobile/ },
   ],
   webServer: {
-    command: 'node server/index.js',
-    url: `http://127.0.0.1:${PORT}/api/health`,
+    // The production build served as plain static files — exactly what Netlify/Render host.
+    command: `npx vite preview --host 127.0.0.1 --port ${PORT} --strictPort`,
+    url: `http://127.0.0.1:${PORT}/`,
     reuseExistingServer: false,
-    env: { PORT: String(PORT), OMNI_DATA_DIR: 'test-results/server-data' },
   },
 });

@@ -14,7 +14,7 @@ import {
   thumbprint,
 } from '../../shared/identity/omniId.js';
 
-const shipped = JSON.parse(await readFile(new URL('../../server/ar/ar-register.json', import.meta.url), 'utf8'));
+const shipped = JSON.parse(await readFile(new URL('../../ar/ar-register.json', import.meta.url), 'utf8'));
 
 async function freshKeys() {
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);

@@ -1,8 +1,12 @@
 # Omni AR Twin — hands-free digital wellness
 
-A React + Node.js app that opens your camera and gives you a personal **AR twin**. The twin mirrors your hands as a digital clone, coaches gesture-based brain exercises, answers voice commands, acts as a digital fill light for your face, and handles the routine steps of healthy habits so you only do the part that needs you.
+A **single static React app with no server and no backend API** that opens your camera and gives you a personal **3D AR twin**. It runs in any modern browser with a camera: laptop, desktop PC, iPhone or Android.
+
+The twin mirrors your hands as a digital clone, coaches gesture-based brain exercises, answers voice commands, acts as a digital fill light for your face, and handles the routine steps of healthy habits so you only do the part that needs you.
 
 The motto is **digital detox**. The twin does roughly 70–80% of each habit (timers, reminders, lighting, coaching, logging). You do the other 20–30%: drink the water, look away from the screen, stretch.
+
+Everything happens on your device. Your data moves between devices only when you **export and import one JSON file**.
 
 Under the hood, the **Omni O(1) engine** (a JavaScript port of [omnidimensionaldialingverse](https://github.com/andrometocsglobal/omnidimensionaldialingverse)) computes arithmetic, geometric and harmonic power sums with one midpoint moment-block expansion. The cost depends only on the power, never on the number of terms.
 
@@ -10,121 +14,89 @@ Under the hood, the **Omni O(1) engine** (a JavaScript port of [omnidimensionald
 
 | Area | What it does |
 | --- | --- |
-| **Camera AR** | The camera opens on load. The canvas overlay draws your hand skeleton, a delayed mirror "digital clone" of your hands, and the twin avatar walking between task stations with a speech bubble. |
-| **Real AR (Android)** | `Enter real AR` starts a WebXR `immersive-ar` session with surface hit-testing (ARCore + Chrome). Tap a surface to place your twin in the room, and tap again to drop task stations. The twin walks to the station of the task it's working on. |
-| **Signed AR registration** | `server/ar/ar-register.json` is an ECDSA P-256 signed manifest of the AR element: integrity hash, capabilities and validity window. The browser verifies it with WebCrypto before any AR feature is enabled, and the server verifies it again before issuing a registration receipt. Tampering disables the twin. |
-| **Omni ID** | One person, one AR twin, one signature: a per-person key pair and a signed passport, registered with the server, plus challenge-response proof of ownership. An AES-GCM/PBKDF2 encrypted backup lets you create it once and use it on any device. |
-| **Gestures** | 11 rotation-invariant gestures from MediaPipe hand landmarks. Each gesture gives a wellness tip, 👍 confirms your part of a task, and fingers answer exercises (0–10 across two hands). |
-| **Brain exercises** | *Finger Math* (hold up the answer), *Mirror Memory* (repeat a growing gesture sequence) and *Gesture Breathing* (open palm to inhale, fist to exhale). Streak points use the exact AP sum, levels grow geometrically, and focus speed is the harmonic mean of your reaction times. |
-| **Voice** | Web Speech recognition (Chrome, Edge, Android), with a typed command box that uses the same parser everywhere. Say `help` for the list. |
-| **Digital bulb** | A software fill light: brightness, contrast and tone grading on the video, a spotlight that follows your detected face, a ring-light mode that turns the whole screen into a light source, and the hardware torch where the camera supports one. Warm, neutral and cool tones. |
-| **Habit automation** | Six habit tasks (hydration, 20-20-20 screen break, posture, calm, detox block, stretch), each split into twin steps and human steps. An automatic screen break triggers after N minutes of screen time. A live meter shows the split between you and the twin. |
-| **Preferences** | Twin name, colour, shape (orb, bot, spark), motto, voice speed and language, gesture steadiness, break interval, detox goal, task speed and reduced motion. |
-| **Omni Lab** | Exact AP, GP and HP sums and D-dimensional lattice sums, computed in the browser or on the server. Shows the chosen algorithm, time and space cost, and a brute-force comparison. Includes a built-in verification suite. |
+| **AR verification on open** | When the camera opens, a verification screen checks the signed AR element step by step: schema, trusted key, SHA-256 integrity, ECDSA P-256 signature (WebCrypto, in your browser), validity window and local receipt. You then choose a sample AR element (Orb, Bot or Spark), its colour and name, and 3D or 2D mode, and start. |
+| **3D Web AR, every device** | A three.js 3D twin drawn over the live camera. It stands on your open palm (scaling and tilting with your hand), floats beside your face (sized by how close you are), goes wherever you click or tap, and walks to its task stations. No ARCore needed. A 2D overlay mode is available for the lightest devices. |
+| **Room-scale AR (ARCore)** | On ARCore Android phones with Chrome, WebXR `immersive-ar` with hit-testing places the twin on real floors and tables. Tap again to drop task stations. |
+| **Signed AR registration** | `ar/ar-register.json` (ECDSA P-256, signed by `npm run sign:ar`) is built into the app. A newer signed registration can be imported as JSON; it replaces the built-in one only if it verifies. Tampered files are rejected and AR stays on the verified copy. |
+| **Omni ID** | One person, one AR twin, one signature. A per-person key pair (kept in IndexedDB) and a self-certifying passport that anyone can verify offline. Proof of ownership happens on-device, and the local AR receipt is signed with your Omni ID. An encrypted (AES-GCM, PBKDF2) JSON backup lets you create it once and use it on any device. |
+| **One-file JSON backup** | The **Data** tab exports everything to one JSON file: preferences, twin, stats, task history, AR registration and receipt, and optionally your encrypted Omni ID. Import it on any other browser or device. |
+| **Gestures** | 11 rotation-invariant gestures from MediaPipe hand landmarks. Each gives a wellness tip, 👍 confirms your part of a task, and fingers answer exercises (0–10 across two hands). |
+| **Brain exercises** | *Finger Math*, *Mirror Memory* and *Gesture Breathing*. Streak points use the exact AP sum, levels grow geometrically, and focus speed is the harmonic mean of your reaction times. |
+| **Voice** | Web Speech recognition where supported, with a typed command box that uses the same grammar everywhere. Say `help`. |
+| **Digital bulb** | Video brightness and tone grading, a spotlight that follows your face, a ring-light mode that turns the whole screen into a light, and the hardware torch where the camera has one. |
+| **Habit automation** | Six habit tasks, each split into twin steps and human steps, with a live meter of the split, plus an automatic screen break after N minutes. |
+| **Omni Lab** | Exact AP, GP and HP sums and D-dimensional lattice sums, plus an exhaustive verification suite, all computed in the browser. |
 
 ## Run it
 
 ```bash
 npm install
-npm run build        # React client -> dist/
-npm start            # Express on http://127.0.0.1:8787 (API + client)
+npm run dev          # http://localhost:5173 (hot reload)
+npm run build        # static site -> dist/
+npm run preview      # serve dist/ locally
 ```
 
-Development with hot reload (API on :8787, Vite on :5173):
+The camera needs a secure context: `localhost` works. Phones need **https**, which Netlify and Render give you. `/?mock=1` swaps MediaPipe for a scriptable tracker (`window.__omni.pose('open_palm')`, `.fingers(3)`, `.clear()`) for demos without a camera.
 
-```bash
-npm run dev
-```
+## Deploy (static hosting, no server)
 
-The camera needs a secure context: `localhost` works. For phones and real AR, serve over **https** (any TLS reverse proxy in front of `npm start`, with `HOST=0.0.0.0`), or use `chrome://inspect` port forwarding to reach `localhost` from the phone.
+The build output `dist/` is plain static files: the app, the MediaPipe WASM runtime, and a CSP meta tag. Hand-tracking models load directly from Google's MediaPipe model storage, which the CSP allows.
 
-## Deploy
+- **Netlify:** connect the repo. `netlify.toml` runs `npm run build`, publishes `dist/`, and adds the SPA fallback and security headers. No functions and no environment variables are needed.
+- **Render:** choose **New → Blueprint** and pick the repo. `render.yaml` defines a **static site** (`runtime: static`) with the same headers and SPA rewrite.
+- **Anything else:** upload `dist/` to any static host with HTTPS.
 
-Both hosts give you HTTPS, which the camera, voice and real AR require on phones.
-
-### Render (full Node server)
-
-`render.yaml` is a Render Blueprint. In Render, choose **New → Blueprint** and pick this repo. It builds with `npm ci && npm run build`, runs `npm start`, and health-checks `/api/health`. It binds `0.0.0.0` on Render's `PORT`, trusts one proxy hop so rate limits see real client IPs, and generates `OMNI_SECRET` for you.
-
-On the free plan the disk is ephemeral, so the identity registry file resets on redeploy. Proving Omni ID ownership still works after a reset because passports are self-certifying. To keep the registry, attach a persistent disk and point `OMNI_DATA_DIR` at it.
-
-### Netlify (CDN + serverless function)
-
-`netlify.toml` builds with `npm run build:netlify`, which is the Vite build plus the MediaPipe WASM copied into `dist/`. It publishes `dist/` to the CDN and runs the same Express API as a Netlify Function (`netlify/functions/api.mjs`, via `serverless-http`). `/api/*` is rewritten to the function, `/models/*` is proxied to Google's model storage (so the page stays same-origin), and the CSP matches the server's exactly (a unit test enforces this).
-
-Set **`OMNI_SECRET`** (any long random string) under Site settings → Environment variables. Omni ID challenges are HMAC-signed and stateless, so any function instance can verify them.
-
-Other hosts: any Node 22 host can run `npm run build && npm start` with `HOST=0.0.0.0`.
-
-`/?mock=1` replaces MediaPipe with a scriptable tracker (`window.__omni.pose('peace')`, `.fingers(3)`, `.clear()`), for demos without a camera.
+A unit test keeps the CSP identical across the built page, `netlify.toml` and `render.yaml`.
 
 ## Tests
 
 ```bash
-npm test             # 51 unit, API and deploy tests (node:test)
-npm run test:e2e     # 13 Playwright tests: production build, real Chrome, fake camera
+npm test             # 44 unit tests (node:test)
+npm run test:e2e     # 18 Playwright tests on the static build, real Chrome, fake camera
 npm run test:all
 ```
-
-The E2E tests use installed Google Chrome by default. Set `PW_CHANNEL=` to use Playwright's bundled Chromium instead (`npx playwright install chromium`).
 
 What the tests check:
 
 - Every AP, GP and HP value in the *Omni AP·GP·HP* deck (powers 1–10), exactly.
-- An exhaustive closed-form vs brute-force suite with 0 failures. The worst HP relative error is ~7e-16.
+- An exhaustive closed-form vs brute-force suite with 0 failures.
 - AR registration tampering: element, signature, schema, key and expiry.
-- Omni ID sign, verify, challenge and backup round-trip, including a forged key and a wrong passphrase.
-- The gesture classifier across rotations and scales, the voice grammar, the exercise and task state machines, and preference sanitising.
-- Deploy targets: the Netlify function handler, Omni ID challenges proven on a different instance from the one that issued them, the `netlify.toml` CSP and model proxies, and `render.yaml`.
-- In the browser: camera on load, gestures giving tips, Finger Math and breathing, bulb, ring light and torch fallback, the Omni maths commands, automated tasks confirmed by thumbs-up and voice, Omni ID create, export, wipe and restore, the Omni Lab, and a tampered registry disabling AR.
+- Omni ID sign, verify, challenge and encrypted backup; local receipts signed by their holder.
+- One-file backup: round-trip, junk rejection, tampered parts dropped with warnings, sanitised preferences and stats.
+- Static-only guarantees: no server files, no `/api` calls from the client, and a matching CSP across all three configs.
+- In the browser: the verification gate and sample selection; 3D Web AR on desktop (palm anchor, click-to-place, 2D fallback); gestures and tips; exercises; the bulb, ring light and torch fallback; the Omni maths commands; automated tasks; Omni ID create, prove, backup and restore; a whole-app backup exported in one browser profile and restored in another; tampered registration imports rejected; tampered stored registration ignored.
 
 ## Re-signing the AR element
 
-Edit `server/ar/ar-element.json`, then run:
+Edit `ar/ar-element.json`, then run:
 
 ```bash
 npm run sign:ar      # add -- --days 180 to change validity
 ```
 
-The first run creates `.keys/ar-signing-key.json` (git-ignored, **keep it private**) and rewrites `shared/security/trustedKeys.js` with the public key. Commit the new `ar-register.json` and `trustedKeys.js`.
+The first run creates `.keys/ar-signing-key.json` (git-ignored, **keep it private**) and rewrites `shared/security/trustedKeys.js`. Rebuild and redeploy, or share the new `ar-register.json` for users to import from the Data tab.
 
 ## Project layout
 
 ```
-shared/            pure JS, used by browser and server
+ar/                signed AR element registration (bundled into the app)
+shared/            pure JS (browser + tests)
   omni/            Fraction (BigInt), midpoint engine, chooser, verifier
   security/        AR registration signing + verification
-  identity/        Omni ID passports, challenges, encrypted backups
-  hands/           gesture classifier, synthetic hands
-  voice/           command parser
-  wellness/        tips, brain-exercise state machines
-  automation/      habit task templates + runner
-  prefs.js
-server/            Express API, AR registry, model proxy
+  identity/        Omni ID passports, challenges, encrypted bundles
+  local/           local receipts, one-file app backup
+  hands/ voice/ wellness/ automation/ prefs.js platform.js
 client/            React app (Vite)
-  src/ar/          canvas AR layer, WebXR scene (three.js)
+  src/ar/          2D overlay, 3D Web AR, WebXR room AR, shared 3D twin model
   src/hooks/       camera, tracking, voice, registration, identity
-  src/components/  panels
+  src/components/  verification gate, panels, Data tab
+scripts/sign-ar.mjs
 tests/unit, tests/e2e
 ```
 
-## API
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/ar/registry` | Signed AR element registration |
-| POST | `/api/ar/register` | Verify and register this device; returns a receipt |
-| POST | `/api/identity/register` | Register or update an Omni ID passport |
-| POST | `/api/identity/challenge` · `/api/identity/verify` | Prove ownership of an Omni ID |
-| GET | `/api/omni/ap?F&L&p` · `/gp?a&r&n&s` · `/hp?F&L&s` | Omni sums |
-| POST | `/api/omni/lattice` | `{ dims: [{F, L, p}] }` |
-| GET | `/api/omni/verify` | Run the verification suite |
-| GET | `/models/:name` | MediaPipe models, fetched once from Google and cached |
-
 ## Honest limits
 
-- The quantities in the Omni engine are classical (Faulhaber, Euler–Maclaurin, Hurwitz ζ). What's new here is the single engine that unifies them, the shared μ-library and the verified constant-time packaging. HP sums have no finite closed form. The fast HP path is double precision, with ~1e-15 relative error. Exact HP uses rationals and only runs on small ranges.
-- The twin automates only what happens inside the app: timers, reminders, lighting, coaching and logging. It can't act elsewhere on your device. AI assistance is a natural next step.
-- Real AR needs an ARCore-capable Android phone with Chrome, over https. Other devices get the camera-overlay twin.
+- The Omni quantities are classical (Faulhaber, Euler–Maclaurin, Hurwitz ζ). What's new is the unified engine, the shared μ-library and the verified constant-time packaging. The fast HP path is double precision, with about 1e-15 relative error.
+- 3D Web AR anchors to your hands and face, not to room surfaces. Surface-anchored AR needs ARCore (Android + Chrome), because browsers on laptops and iPhones don't expose surface tracking.
+- The twin automates only what happens inside the app. With no server, nothing syncs automatically: use the JSON export and import.
 - Wellness tips are general guidance, not medical advice.
-- All camera, hand and face processing stays in the browser.

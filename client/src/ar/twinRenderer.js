@@ -24,7 +24,7 @@ const BONES = [
 
 const CLONE_DELAY = 8; // frames
 export function createTwinState() {
-  return { x: 0.8, y: 0.25, vx: 0, history: new Array(CLONE_DELAY + 1).fill(null), head: 0, last: 0, scanUntil: 0, demoUntil: 0 };
+  return { x: 0.8, y: 0.25, scale: 1, tilt: 0, anchor: 'home', placed: null, moving: false, history: new Array(CLONE_DELAY + 1).fill(null), head: 0, last: 0, scanUntil: 0, demoUntil: 0 };
 }
 
 function drawHand(ctx, lm, W, H, mirror, { color, width, glow, dots }) {
@@ -63,7 +63,7 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawAvatar(ctx, x, y, r, shape, color, t, blink) {
+export function drawAvatar(ctx, x, y, r, shape, color, t, blink) {
   const bob = Math.sin(t / 380) * r * 0.12;
   y += bob;
   ctx.save();
@@ -159,7 +159,7 @@ function drawBubble(ctx, x, y, text, W) {
  * opts: { hands, face, mirror, prefs, task: { templateId, waitingForHuman, progress } | null, bubble, now }
  */
 export function renderFrame(ctx, W, H, twin, opts) {
-  const { hands = [], face, mirror, prefs, task, bubble, now, arEnabled } = opts;
+  const { hands = [], face, mirror, prefs, task, bubble, now, arEnabled, palm = null, avatar3d = false } = opts;
   ctx.clearRect(0, 0, W, H);
   const color = prefs.twinColor;
   const X = (x) => (mirror ? 1 - x : x);
@@ -205,25 +205,45 @@ export function renderFrame(ctx, W, H, twin, opts) {
     ctx.restore();
   }
 
-  // Where should the twin be?
+  // Where should the twin be? task > palm > placed > face > home.
   let tx = 0.8;
   let ty = 0.22;
+  let ts = 1;
+  let tilt = 0;
+  let anchor = 'home';
   if (station) {
+    anchor = 'task';
     tx = station.x + (station.x > 0.5 ? -0.08 : 0.08);
     ty = station.y + (task.waitingForHuman ? -0.1 : 0);
+  } else if (palm) {
+    anchor = 'palm';
+    tx = palm.x;
+    ty = palm.y - palm.size * 0.55; // standing on the palm
+    ts = Math.min(2.2, Math.max(0.45, palm.size / 0.16));
+    tilt = mirror ? -palm.tilt : palm.tilt;
+  } else if (twin.placed) {
+    anchor = 'placed';
+    tx = twin.placed.x;
+    ty = twin.placed.y;
   } else if (face) {
+    anchor = 'face';
     tx = face.x + face.width / 2 + face.width * 0.9;
     ty = Math.max(0.12, face.y - 0.02);
+    ts = Math.min(1.8, Math.max(0.6, face.width / 0.25));
   }
   const dt = Math.min(0.1, (now - (twin.last || now)) / 1000);
   twin.last = now;
-  const k = prefs.reducedMotion ? 1 : Math.min(1, dt * 2.4);
+  const k = prefs.reducedMotion ? 1 : Math.min(1, dt * (anchor === 'palm' ? 9 : 2.4));
+  twin.moving = Math.hypot(tx - twin.x, ty - twin.y) > 0.02;
   twin.x += (tx - twin.x) * k;
   twin.y += (ty - twin.y) * k;
+  twin.scale += (ts - twin.scale) * k;
+  twin.tilt += (tilt - twin.tilt) * k;
+  twin.anchor = anchor;
 
   const ax = X(twin.x) * W;
   const ay = twin.y * H;
-  const r = Math.max(18, Math.min(W, H) * 0.045);
+  const r = Math.max(18, Math.min(W, H) * 0.045) * twin.scale;
 
   // Posture scan box.
   if (face && now < twin.scanUntil) {
@@ -245,6 +265,12 @@ export function renderFrame(ctx, W, H, twin, opts) {
     const open = Math.floor(now / 700) % 2 === 0;
     const demo = makeHand({ pose: open ? 'open_palm' : 'fist', scale: 0.1, cx: twin.x + (twin.x > 0.5 ? -0.12 : 0.12), cy: twin.y + 0.16 });
     drawHand(ctx, demo, W, H, false, { color, width: 3, glow: 12, dots: false });
+  }
+
+  // In 3D mode the three.js layer draws the twin; keep only the speech bubble here.
+  if (avatar3d) {
+    drawBubble(ctx, ax, ay - H * 0.12 * twin.scale, bubble, W);
+    return;
   }
 
   const blink = Math.floor(now / 160) % 25 === 0;
@@ -270,4 +296,15 @@ export function renderFrame(ctx, W, H, twin, opts) {
   ctx.restore();
 
   drawBubble(ctx, ax, drawnY - r * 1.4, bubble, W);
+}
+
+/** Palm anchor from 21 landmarks: centre, size (wrist→middle MCP) and roll. */
+export function palmAnchor(lm) {
+  const ids = [0, 5, 9, 13, 17];
+  const x = ids.reduce((s, i) => s + lm[i].x, 0) / ids.length;
+  const y = ids.reduce((s, i) => s + lm[i].y, 0) / ids.length;
+  const size = Math.hypot(lm[9].x - lm[0].x, lm[9].y - lm[0].y);
+  // Roll: angle of the wrist→middle-MCP axis away from straight up, damped.
+  const roll = Math.atan2(lm[9].x - lm[0].x, lm[0].y - lm[9].y);
+  return { x, y, size, tilt: Math.max(-0.8, Math.min(0.8, -roll * 0.8)) };
 }

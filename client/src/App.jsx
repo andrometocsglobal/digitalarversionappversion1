@@ -7,6 +7,8 @@ import * as Ex from '@shared/wellness/exercises.js';
 import * as Tasks from '@shared/automation/tasks.js';
 import { sanitizePrefs, DEFAULT_PREFS, TONE_RGB } from '@shared/prefs.js';
 import { solve } from '@shared/omni/index.js';
+import { buildBackup, parseBackup, sanitizeHistory } from '@shared/local/backup.js';
+import { TRUSTED_KEYS } from '@shared/security/trustedKeys.js';
 
 import { useCamera } from './hooks/useCamera.js';
 import { useTracking } from './hooks/useTracking.js';
@@ -14,8 +16,7 @@ import { useVoice, speak } from './hooks/useVoice.js';
 import { useRegistration } from './hooks/useRegistration.js';
 import { useIdentity } from './hooks/useIdentity.js';
 import { loadJSON, saveJSON, today } from './lib/store.js';
-import { getJSON } from './lib/api.js';
-import { createTwinState, renderFrame } from './ar/twinRenderer.js';
+import { createTwinState, renderFrame, palmAnchor } from './ar/twinRenderer.js';
 
 import TasksPanel from './components/TasksPanel.jsx';
 import TrainPanel from './components/TrainPanel.jsx';
@@ -23,6 +24,8 @@ import PrefsPanel from './components/PrefsPanel.jsx';
 import IdentityPanel, { SignatureGlyph } from './components/IdentityPanel.jsx';
 import OmniLab from './components/OmniLab.jsx';
 import XRButton from './components/XRButton.jsx';
+import ArVerifyGate from './components/ArVerifyGate.jsx';
+import DataPanel from './components/DataPanel.jsx';
 
 const MOCK = new URLSearchParams(window.location.search).has('mock');
 
@@ -41,6 +44,7 @@ const TABS = [
   ['prefs', 'My twin'],
   ['id', 'Omni ID'],
   ['lab', 'Omni Lab'],
+  ['data', 'Data'],
   ['help', 'Help'],
 ];
 
@@ -64,8 +68,8 @@ export default function App() {
     });
   }, []);
 
-  const reg = useRegistration();
   const idState = useIdentity();
+  const reg = useRegistration(idState.identity);
   const camera = useCamera(videoRef);
 
   const [tab, setTab] = useState('tasks');
@@ -84,7 +88,14 @@ export default function App() {
   const [, force] = useState(0);
   const rerender = useCallback(() => force((n) => n + 1), []);
 
-  const queueRef = useRef(Tasks.createQueue());
+  const [arStarted, setArStarted] = useState(false);
+  const [webglOk, setWebglOk] = useState(null);
+  const [pendingBundle, setPendingBundle] = useState('');
+  const stageRef = useRef(null);
+  const arHostRef = useRef(null);
+  const sceneRef = useRef(null);
+
+  const queueRef = useRef({ ...Tasks.createQueue(), done: sanitizeHistory(loadJSON('omni.history', [])) });
   const exerciseRef = useRef(null);
   const twinRef = useRef(createTwinState());
   const stabRef = useRef(new GestureStabilizer(prefs.gestureFrames));
@@ -95,7 +106,33 @@ export default function App() {
   const tipCooldown = useRef({});
   const visibleMs = useRef(0);
   const live = useRef({});
-  live.current = { prefs, reg, camera, focus };
+  live.current = { prefs, reg, camera, focus, arStarted };
+
+  // 3D Web AR layer (three.js over the camera) — any device with WebGL.
+  const want3d = arStarted && prefs.arMode === '3d' && reg.status === 'verified';
+  useEffect(() => {
+    if (!want3d || !arHostRef.current) return undefined;
+    let cancelled = false;
+    import('./ar/webArScene.js').then(({ createWebAR }) => {
+      if (cancelled) return;
+      const scene = createWebAR(arHostRef.current);
+      setWebglOk(!!scene);
+      sceneRef.current = scene;
+    });
+    return () => {
+      cancelled = true;
+      sceneRef.current?.dispose();
+      sceneRef.current = null;
+    };
+  }, [want3d]);
+
+  const placeTwin = (e) => {
+    if (!arStarted) return;
+    const box = e.currentTarget.getBoundingClientRect();
+    const dx = (e.clientX - box.left) / box.width;
+    const y = (e.clientY - box.top) / box.height;
+    twinRef.current.placed = { x: live.current.camera.facingMode === 'user' ? 1 - dx : dx, y };
+  };
 
   useEffect(() => {
     stabRef.current = new GestureStabilizer(prefs.gestureFrames);
@@ -196,6 +233,7 @@ export default function App() {
       queueRef.current = r.queue;
       runEffects(r.effects ?? []);
       const completed = Array.isArray(r.completed) ? r.completed : r.completed ? [r.completed] : [];
+      if (completed.length) saveJSON('omni.history', r.queue.done);
       for (const c of completed) {
         say(`✅ ${c.title} done! Thank you.`, { voice: true });
         addLog(`${c.icon} ${c.title} completed`);
@@ -358,7 +396,13 @@ export default function App() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const q = queueRef.current;
       const st = Tasks.status(q);
-      renderFrame(ctx, W, H, twinRef.current, {
+      const arOn = r.can('twin') && live.current.arStarted;
+      // An open palm becomes a stage the twin stands on.
+      const palmIdx = cls.hands.findIndex((h) => h.gesture === 'open_palm');
+      const palm = palmIdx >= 0 ? palmAnchor(results.hands[palmIdx].landmarks) : null;
+      const scene = sceneRef.current;
+      const twin = twinRef.current;
+      renderFrame(ctx, W, H, twin, {
         hands: results.hands,
         face: results.face,
         mirror,
@@ -366,8 +410,27 @@ export default function App() {
         task: q.active ? { templateId: q.active.templateId, waitingForHuman: st.waitingForHuman, progress: st.progress } : null,
         bubble: bubbleRef.current.until > Date.now() ? bubbleRef.current.text : '',
         now,
-        arEnabled: r.can('twin'),
+        arEnabled: arOn,
+        palm,
+        avatar3d: !!scene,
       });
+      if (scene) {
+        const f = results.face;
+        scene.update({
+          visible: arOn && p.showTwin,
+          x: mirror ? 1 - twin.x : twin.x,
+          y: twin.y,
+          scale: twin.scale,
+          tilt: twin.tilt,
+          shape: p.twinShape,
+          color: p.twinColor,
+          moving: twin.moving,
+          lookX: f ? (mirror ? 1 - (f.x + f.width / 2) : f.x + f.width / 2) : null,
+          label: st.step ? (st.waitingForHuman ? `Your turn: ${st.step.label}` : st.step.label) : p.twinName,
+        });
+      }
+      const stage = stageRef.current;
+      if (stage && stage.dataset.anchor !== twin.anchor) stage.dataset.anchor = twin.anchor;
     },
     [handleGesture],
   );
@@ -441,14 +504,10 @@ export default function App() {
         case 'omni': {
           let r;
           try {
-            r = await getJSON(`/api/omni/${a.kind}?${new URLSearchParams(a.params)}`);
-          } catch {
-            try {
-              r = solve(a.kind, a.params);
-            } catch (err) {
-              say(`I can't compute that: ${err.message}`);
-              break;
-            }
+            r = solve(a.kind, a.params); // on-device, O(1) in the number of terms
+          } catch (err) {
+            say(`I can't compute that: ${err.message}`);
+            break;
           }
           setLastOmni(r);
           say(`🧮 ${r.decimal ?? r.value} — ${r.exact ? 'exact' : 'O(1) asymptotic'}, ${r.ms} ms`, { ms: 9000 });
@@ -464,20 +523,48 @@ export default function App() {
 
   const voice = useVoice({ lang: prefs.voiceLang, onCommand: (t) => handleCommand(t, 'voice') });
 
-  // Greet once the AR element is verified.
+  // Greet once the verified AR element is started.
   const greeted = useRef(false);
   useEffect(() => {
-    if (reg.status === 'verified' && !greeted.current) {
+    if (arStarted && reg.status === 'verified' && !greeted.current) {
       greeted.current = true;
       say(`Hi ${prefs.displayName}! I'm ${prefs.twinName}, your AR twin. Show me a gesture or give me a task.`, { ms: 7000 });
     }
-  }, [reg.status, prefs.displayName, prefs.twinName, say]);
+  }, [arStarted, reg.status, prefs.displayName, prefs.twinName, say]);
 
   // Ring light brightens the whole screen — the display itself becomes the light.
   useEffect(() => {
     document.body.classList.toggle('ring-on', prefs.ringLight && prefs.bulbOn);
     document.body.style.setProperty('--bulb', `rgb(${TONE_RGB[prefs.bulbTone].join(',')})`);
   }, [prefs.ringLight, prefs.bulbOn, prefs.bulbTone]);
+
+  // ---------------------------------------------------- JSON export / import
+  const exportBackup = async (passphrase) => {
+    const bundle = passphrase ? await idState.backup(passphrase) : null;
+    return buildBackup({
+      prefs,
+      stats,
+      history: queueRef.current.done,
+      registry: reg.registry,
+      receipt: reg.receipt,
+      passport: idState.identity?.passport ?? null,
+      identityBundle: bundle,
+    });
+  };
+
+  const importBackup = async (text) => {
+    const r = await parseBackup(text, { trustedKeys: TRUSTED_KEYS });
+    updatePrefs(r.prefs);
+    setStats(r.stats);
+    queueRef.current = { ...queueRef.current, done: r.history };
+    saveJSON('omni.history', r.history);
+    if (r.registry && r.registry.integrity !== reg.registry?.integrity) await reg.importRegistry(r.registry);
+    if (r.receipt && r.receipt.integrity === (r.registry ?? reg.registry)?.integrity) reg.restoreReceipt(r.receipt);
+    if (r.identityBundle && !idState.identity) setPendingBundle(JSON.stringify(r.identityBundle, null, 2));
+    addLog(`⬆ Imported app backup (${r.history.length} history items)`);
+    rerender();
+    return r;
+  };
 
   // --------------------------------------------------------------- render
   const q = queueRef.current;
@@ -501,7 +588,9 @@ export default function App() {
           {reg.status === 'checking' && 'Verifying AR element…'}
           {reg.status === 'verified' && `🛡️ AR element verified · ${reg.element.name} v${reg.element.version}`}
           {reg.status === 'failed' && `⚠️ AR registration failed: ${reg.reason}`}
-          {reg.receipt && reg.status === 'verified' && <small data-testid="reg-receipt"> · receipt {reg.receipt.registrationId.slice(0, 8)}</small>}
+          {reg.receipt && reg.status === 'verified' && (
+            <small data-testid="reg-receipt"> · receipt {reg.receipt.registrationId.slice(0, 8)}{reg.receipt.holder ? ' ✍️' : ''}</small>
+          )}
         </div>
         {idState.identity && (
           <button className="id-chip" onClick={() => setTab('id')} title="Your Omni ID">
@@ -517,6 +606,10 @@ export default function App() {
             className={`stage ${prefs.ringLight && prefs.bulbOn ? 'ring' : ''}`}
             style={{ '--bulb': `rgb(${rgb})`, '--level': prefs.bulbLevel / 100 }}
             data-testid="stage"
+            data-ar-mode={sceneRef.current ? '3d' : '2d'}
+            ref={stageRef}
+            onClick={placeTwin}
+            onDoubleClick={() => (twinRef.current.placed = null)}
           >
             <video
               ref={videoRef}
@@ -530,6 +623,20 @@ export default function App() {
             <div className="bulb-wash" hidden={!prefs.bulbOn} data-testid="bulb-wash" />
             <div ref={spotRef} className="bulb-spot" hidden={!prefs.bulbOn} />
             <canvas ref={canvasRef} className="ar-layer" data-testid="ar-layer" />
+            {/* 3D twin above the hand skeleton, so it stands in front of your palm. */}
+            <div ref={arHostRef} className="ar3d-host" />
+
+            {!arStarted && (
+              <ArVerifyGate
+                reg={reg}
+                camera={camera}
+                prefs={prefs}
+                webglOk={webglOk}
+                onChange={updatePrefs}
+                onStart={() => setArStarted(true)}
+                onSkip={() => setArStarted(true)}
+              />
+            )}
 
             {camera.status !== 'live' && (
               <div className="stage-msg" data-testid="camera-status">
@@ -617,6 +724,15 @@ export default function App() {
               >
                 🎙️ {voice.listening ? 'Listening' : 'Voice'}
               </button>
+              <button
+                className={prefs.arMode === '3d' ? 'on' : ''}
+                aria-pressed={prefs.arMode === '3d'}
+                onClick={() => updatePrefs({ arMode: prefs.arMode === '3d' ? '2d' : '3d' })}
+                data-testid="ar-mode-toggle"
+                title="3D Web AR works on laptops, PCs and phones"
+              >
+                🧊 {prefs.arMode === '3d' ? '3D AR' : '2D AR'}
+              </button>
               <button onClick={camera.flip} title="Switch camera">🔄</button>
               <XRButton enabled={reg.can('camera')} getState={() => ({ prefs: live.current.prefs, taskId: queueRef.current.active?.templateId ?? null, stepLabel: Tasks.status(queueRef.current).step?.label ?? '', waitingForHuman: Tasks.status(queueRef.current).waitingForHuman })} />
             </div>
@@ -661,8 +777,9 @@ export default function App() {
           )}
           {tab === 'train' && <TrainPanel exerciseView={exView} onStart={startExercise} onStop={stopExercise} tip={tip} onNextTip={nextTip} tipIndex={tipIndex} />}
           {tab === 'prefs' && <PrefsPanel prefs={prefs} onChange={updatePrefs} onReset={() => updatePrefs({ ...DEFAULT_PREFS })} />}
-          {tab === 'id' && <IdentityPanel idState={idState} prefs={prefs} />}
+          {tab === 'id' && <IdentityPanel idState={idState} prefs={prefs} initialBundle={pendingBundle} />}
           {tab === 'lab' && <OmniLab lastVoiceResult={lastOmni} />}
+          {tab === 'data' && <DataPanel reg={reg} hasIdentity={!!idState.identity} onExport={exportBackup} onImport={importBackup} />}
           {tab === 'help' && (
             <section className="panel">
               <h2>Hands-free commands</h2>
@@ -672,8 +789,10 @@ export default function App() {
               <h3>Gestures</h3>
               <p className="muted">👍 thumbs up confirms your part of a task · during exercises, fingers answer · otherwise each gesture brings a wellness tip.</p>
               <h3>Privacy</h3>
-              <p className="muted">Camera, hand and face processing run entirely in your browser. The server only sees the AR registration, your public Omni ID passport, and Omni Lab requests.</p>
-              <h3>Real AR</h3>
+              <p className="muted">Everything runs in your browser — there is no server. Camera, hand and face processing never leave the device; your data moves only when you export a JSON file (Data tab).</p>
+              <h3>AR on every device</h3>
+              <p className="muted">3D Web AR runs in any browser with a camera — laptop, desktop, iPhone or Android. Show an open palm and {prefs.twinName} stands on it; click or tap the video to place it; double-click to release it.</p>
+              <h3>Room-scale AR (ARCore)</h3>
               <p className="muted">On an ARCore Android phone with Chrome (over https), “Enter real AR” places {prefs.twinName} on real surfaces. Tap again to drop task stations; the twin walks to whichever task it is working on.</p>
             </section>
           )}
