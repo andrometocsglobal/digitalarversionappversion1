@@ -1,0 +1,9 @@
+{
+  "name": "Omni AR Twin — hands-free wellness",
+  "short_name": "Omni AR",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#071c26",
+  "theme_color": "#071c26",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

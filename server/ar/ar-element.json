@@ -1,0 +1,14 @@
+{
+  "id": "omni-digital-twin",
+  "name": "Omni Digital Twin",
+  "version": "1.0.0",
+  "description": "Camera-anchored AR companion that mirrors the user's hands as a digital clone, coaches gesture brain exercises, answers voice commands and drives the digital bulb.",
+  "publisher": "Andrometocs Global",
+  "capabilities": ["camera", "hands", "face", "voice", "speech", "torch", "digital-bulb", "twin", "omni-compute"],
+  "anchors": { "twin": "hand-mirror", "orb": "face-top" },
+  "privacy": {
+    "videoLeavesDevice": false,
+    "storesBiometrics": false,
+    "note": "All camera, hand and face processing happens in the browser. Only the registration request reaches the server."
+  }
+}
