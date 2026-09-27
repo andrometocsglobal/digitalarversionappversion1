@@ -1,0 +1,26 @@
+# Render Blueprint: one Node web service running Express (API + React build).
+# New -> Blueprint -> pick this repo. Render supplies PORT and HTTPS.
+services:
+  - type: web
+    name: omni-ar-twin
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: HOST
+        value: 0.0.0.0
+      # One proxy hop (Render's load balancer) so rate limits see real client IPs.
+      - key: TRUST_PROXY
+        value: "1"
+      # Signs Omni ID login challenges; generated once by Render.
+      - key: OMNI_SECRET
+        generateValue: true
+      # Identity registry file. The free plan's disk is ephemeral; attach a
+      # persistent disk (paid) and point this at it to keep registrations.
+      - key: OMNI_DATA_DIR
+        value: /opt/render/project/src/server/data

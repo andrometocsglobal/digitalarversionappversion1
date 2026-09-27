@@ -7,6 +7,7 @@
     "test": "node --test \"tests/unit/*.test.mjs\"",
     "dev": "node scripts/dev.mjs",
     "build": "vite build",
+    "build:netlify": "vite build && node scripts/copy-wasm.mjs",
     "start": "node server/index.js",
     "test:e2e": "playwright test",
     "test:all": "npm test && npm run build && npm run test:e2e",
@@ -19,6 +20,7 @@
     "express": "^5.2.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "serverless-http": "^4.0.0",
     "three": "^0.186.1"
   },
   "devDependencies": {

@@ -38,12 +38,30 @@ npm run dev
 
 The camera needs a secure context: `localhost` works. For phones and real AR, serve over **https** (any TLS reverse proxy in front of `npm start`, with `HOST=0.0.0.0`), or use `chrome://inspect` port forwarding to reach `localhost` from the phone.
 
+## Deploy
+
+Both hosts give you HTTPS, which the camera, voice and real AR require on phones.
+
+### Render (full Node server)
+
+`render.yaml` is a Render Blueprint. In Render, choose **New → Blueprint** and pick this repo. It builds with `npm ci && npm run build`, runs `npm start`, and health-checks `/api/health`. It binds `0.0.0.0` on Render's `PORT`, trusts one proxy hop so rate limits see real client IPs, and generates `OMNI_SECRET` for you.
+
+On the free plan the disk is ephemeral, so the identity registry file resets on redeploy. Proving Omni ID ownership still works after a reset because passports are self-certifying. To keep the registry, attach a persistent disk and point `OMNI_DATA_DIR` at it.
+
+### Netlify (CDN + serverless function)
+
+`netlify.toml` builds with `npm run build:netlify`, which is the Vite build plus the MediaPipe WASM copied into `dist/`. It publishes `dist/` to the CDN and runs the same Express API as a Netlify Function (`netlify/functions/api.mjs`, via `serverless-http`). `/api/*` is rewritten to the function, `/models/*` is proxied to Google's model storage (so the page stays same-origin), and the CSP matches the server's exactly (a unit test enforces this).
+
+Set **`OMNI_SECRET`** (any long random string) under Site settings → Environment variables. Omni ID challenges are HMAC-signed and stateless, so any function instance can verify them.
+
+Other hosts: any Node 22 host can run `npm run build && npm start` with `HOST=0.0.0.0`.
+
 `/?mock=1` replaces MediaPipe with a scriptable tracker (`window.__omni.pose('peace')`, `.fingers(3)`, `.clear()`), for demos without a camera.
 
 ## Tests
 
 ```bash
-npm test             # 44 unit + API tests (node:test)
+npm test             # 51 unit, API and deploy tests (node:test)
 npm run test:e2e     # 13 Playwright tests: production build, real Chrome, fake camera
 npm run test:all
 ```
@@ -57,6 +75,7 @@ What the tests check:
 - AR registration tampering: element, signature, schema, key and expiry.
 - Omni ID sign, verify, challenge and backup round-trip, including a forged key and a wrong passphrase.
 - The gesture classifier across rotations and scales, the voice grammar, the exercise and task state machines, and preference sanitising.
+- Deploy targets: the Netlify function handler, Omni ID challenges proven on a different instance from the one that issued them, the `netlify.toml` CSP and model proxies, and `render.yaml`.
 - In the browser: camera on load, gestures giving tips, Finger Math and breathing, bulb, ring light and torch fallback, the Omni maths commands, automated tasks confirmed by thumbs-up and voice, Omni ID create, export, wipe and restore, the Omni Lab, and a tampered registry disabling AR.
 
 ## Re-signing the AR element

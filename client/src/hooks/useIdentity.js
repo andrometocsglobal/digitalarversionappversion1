@@ -55,7 +55,7 @@ export function useIdentity() {
     if (!identity) return null;
     const { nonce } = await postJSON('/api/identity/challenge', { id: identity.passport.id });
     const signature = await signChallenge(identity.keyPair.privateKey, identity.passport.id, nonce);
-    const res = await postJSON('/api/identity/verify', { id: identity.passport.id, nonce, signature });
+    const res = await postJSON('/api/identity/verify', { id: identity.passport.id, nonce, signature, passport: identity.passport });
     setStatus({ state: 'ready', message: `Ownership proven to the server at ${new Date(res.verifiedAt).toLocaleTimeString()}.` });
     return res;
   }, [identity]);

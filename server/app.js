@@ -6,7 +6,7 @@ import { readFile, mkdir, writeFile, stat } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 
 import { solve, verifyAll, apFormula } from '../shared/omni/index.js';
 import { verifyRegistration } from '../shared/security/arVerify.js';
@@ -51,9 +51,8 @@ function rateLimiter({ windowMs, max }) {
   };
 }
 
-function securityHeaders(_req, res, next) {
-  res.set({
-    'Content-Security-Policy': [
+/** Shared with netlify.toml (a unit test keeps the two in sync). */
+export const CSP = [
       "default-src 'self'",
       "script-src 'self' 'wasm-unsafe-eval'",
       "style-src 'self' 'unsafe-inline'",
@@ -64,7 +63,11 @@ function securityHeaders(_req, res, next) {
       "object-src 'none'",
       "base-uri 'self'",
       "frame-ancestors 'none'",
-    ].join('; '),
+    ].join('; ');
+
+function securityHeaders(_req, res, next) {
+  res.set({
+    'Content-Security-Policy': CSP,
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
     'Permissions-Policy': 'camera=(self), microphone=(self), geolocation=()',
@@ -81,15 +84,19 @@ export function createApp({
   fetchImpl = globalThis.fetch,
   now = () => new Date(),
   dataDir = join(here, 'data'), // null keeps identities in memory only
+  registry = null, // pass the parsed registry to skip the file read (serverless bundles)
+  secret = process.env.OMNI_SECRET || randomBytes(32).toString('hex'),
+  trustProxy = process.env.TRUST_PROXY ?? 'loopback',
 } = {}) {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 'loopback');
+  // Behind Render/Netlify set TRUST_PROXY=1 so rate limits see the real client IP.
+  app.set('trust proxy', /^\d+$/.test(String(trustProxy)) ? Number(trustProxy) : trustProxy);
   app.use(securityHeaders);
   app.use(express.json({ limit: '16kb' }));
 
   const registrations = new BoundedMap(1000);
-  const loadRegistry = async () => JSON.parse(await readFile(registryPath, 'utf8'));
+  const loadRegistry = async () => registry ?? JSON.parse(await readFile(registryPath, 'utf8'));
 
   // ------------------------------------------------------------------ health
   app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'digital-ar-omni-wellness', time: now().toISOString() }));
@@ -161,8 +168,25 @@ export function createApp({
       .then(() => writeFile(identityFile, snapshot))
       .catch((err) => console.warn(`could not save identities: ${err.message}`));
   };
-  const nonces = new BoundedMap(5000);
+  // Challenges are stateless: nonce = "<expiry>.<random>.<HMAC(id|expiry|random)>",
+  // so any instance sharing OMNI_SECRET can check one (serverless-friendly).
+  // Used nonces are remembered per instance to block replays within the TTL.
+  const usedNonces = new BoundedMap(10_000);
   const NONCE_TTL_MS = 120_000;
+  const mac = (s) => createHmac('sha256', secret).update(s).digest('base64url');
+  const issueNonce = (id) => {
+    const exp = Date.now() + NONCE_TTL_MS;
+    const rand = randomBytes(12).toString('base64url');
+    return `${exp}.${rand}.${mac(`${id}|${exp}|${rand}`)}`;
+  };
+  const nonceValid = (id, nonce) => {
+    const [exp, rand, tag, extra] = String(nonce).split('.');
+    if (!exp || !rand || !tag || extra !== undefined || !(Number(exp) >= Date.now())) return false;
+    const want = Buffer.from(mac(`${id}|${exp}|${rand}`));
+    const got = Buffer.from(tag);
+    return want.length === got.length && timingSafeEqual(want, got);
+  };
+  const ID_RE = /^[A-Za-z0-9_-]{43}$/; // base64url SHA-256 thumbprint
 
   app.post('/api/identity/register', rateLimiter({ windowMs: 60_000, max: 30 }), async (req, res, next) => {
     try {
@@ -187,23 +211,25 @@ export function createApp({
 
   app.post('/api/identity/challenge', rateLimiter({ windowMs: 60_000, max: 60 }), (req, res) => {
     const id = req.body?.id;
-    if (typeof id !== 'string' || !identities.has(id)) return res.status(404).json({ error: 'unknown identity' });
-    const nonce = randomUUID();
-    nonces.set(nonce, { id, expires: Date.now() + NONCE_TTL_MS });
-    res.json({ nonce, expiresInMs: NONCE_TTL_MS });
+    if (typeof id !== 'string' || !ID_RE.test(id)) return res.status(400).json({ error: 'id must be an Omni ID thumbprint' });
+    res.json({ nonce: issueNonce(id), expiresInMs: NONCE_TTL_MS });
   });
 
+  // Body: { id, nonce, signature, passport? }. The passport is self-certifying
+  // (id = key thumbprint), so it can come with the request — no server state needed.
   app.post('/api/identity/verify', rateLimiter({ windowMs: 60_000, max: 60 }), async (req, res, next) => {
     try {
-      const { id, nonce, signature } = req.body ?? {};
-      const n = nonces.get(nonce);
-      nonces.delete(nonce); // single use, whatever the outcome
-      if (!n || n.id !== id || n.expires < Date.now()) return res.status(400).json({ error: 'invalid or expired challenge' });
-      const r = identities.get(id);
-      if (!r) return res.status(404).json({ error: 'unknown identity' });
-      const ok = await verifyChallenge(r.passport.publicKey, id, nonce, signature);
+      const { id, nonce, signature, passport } = req.body ?? {};
+      if (typeof id !== 'string' || !nonceValid(id, nonce) || usedNonces.has(nonce)) {
+        return res.status(400).json({ error: 'invalid or expired challenge' });
+      }
+      usedNonces.set(nonce, true); // single use, whatever the outcome
+      let pp = identities.get(id)?.passport;
+      if (!pp && passport?.id === id && (await verifyPassport(passport)).ok) pp = passport;
+      if (!pp) return res.status(404).json({ error: 'unknown identity — send the passport with the proof' });
+      const ok = await verifyChallenge(pp.publicKey, id, nonce, signature);
       if (!ok) return res.status(401).json({ error: 'signature does not prove key ownership' });
-      res.json({ ok: true, id, profile: r.passport.profile, verifiedAt: now().toISOString() });
+      res.json({ ok: true, id, profile: pp.profile, verifiedAt: now().toISOString() });
     } catch (err) {
       next(err);
     }
