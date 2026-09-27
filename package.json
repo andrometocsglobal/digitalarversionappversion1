@@ -4,7 +4,7 @@
   "description": "Omni O(1) engine + React AR wellness app (camera, gestures, voice, digital bulb) with Node.js backend",
   "main": "server/index.js",
   "scripts": {
-    "test": "node --test \\tests/unit/*.test.mjs\"",
+    "test": "node --test \"tests/unit/*.test.mjs\"",
     "dev": "node scripts/dev.mjs",
     "build": "vite build",
     "start": "node server/index.js",
@@ -27,6 +27,6 @@
     "vite": "^8.3.1"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }
