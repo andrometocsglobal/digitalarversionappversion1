@@ -1,6 +1,8 @@
 // User preferences for the AR twin and the app. sanitizePrefs() is the single
 // gate for anything read from storage, the UI or an imported identity.
 
+import { DEFAULT_GESTURE_MAP, sanitizeGestureMap } from './actions.js';
+
 export const DEFAULT_PREFS = Object.freeze({
   displayName: 'Me',
   twinName: 'Omni',
@@ -9,6 +11,10 @@ export const DEFAULT_PREFS = Object.freeze({
   arMode: '3d', // 3d (three.js over the camera, any device) | 2d (canvas overlay)
   motto: 'Digital detox, healthy habits.',
   speech: true,
+  autoListen: true, // start the microphone when AR starts — hands-free, no Send button
+  voiceActions: true, // voice commands drive the twin
+  gestureActions: true, // hand gestures drive the twin (see gestureMap)
+  gestureMap: DEFAULT_GESTURE_MAP,
   voiceRate: 1,
   voiceLang: 'en-US',
   bulbOn: false,
@@ -39,6 +45,10 @@ export function sanitizePrefs(p = {}) {
     arMode: pick(p.arMode, ['3d', '2d'], d.arMode),
     motto: str(p.motto, 80, d.motto),
     speech: bool(p.speech, d.speech),
+    autoListen: bool(p.autoListen, d.autoListen),
+    voiceActions: bool(p.voiceActions, d.voiceActions),
+    gestureActions: bool(p.gestureActions, d.gestureActions),
+    gestureMap: sanitizeGestureMap(p.gestureMap),
     voiceRate: clamp(p.voiceRate, 0.5, 2, d.voiceRate),
     voiceLang: /^[a-z]{2}(-[A-Z]{2})?$/.test(p.voiceLang ?? '') ? p.voiceLang : d.voiceLang,
     bulbOn: bool(p.bulbOn, d.bulbOn),

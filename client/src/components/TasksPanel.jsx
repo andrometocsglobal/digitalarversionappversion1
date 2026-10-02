@@ -66,7 +66,6 @@ export default function TasksPanel({ queue, qStatus, onAssign, onConfirm, onCanc
         <div><b data-testid="stat-tasks">{stats.tasksDone}</b><span>tasks done</span></div>
         <div><b>{stats.glasses}</b><span>glasses</span></div>
         <div><b data-testid="stat-detox">{Math.round(stats.detoxMs / 60000)}</b><span>detox min / {prefs.detoxGoalMin}</span></div>
-        <div><b>{stats.breaths}</b><span>breaths</span></div>
       </div>
       {queue.done.length > 0 && (
         <ul className="done-list" data-testid="done-list">

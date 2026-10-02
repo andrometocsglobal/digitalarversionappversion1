@@ -44,7 +44,7 @@ test('app backup round-trips prefs, stats, history, registration, receipt and en
   const receipt = await createReceipt({ registry, identity: me });
   const backup = buildBackup({
     prefs: { ...DEFAULT_PREFS, twinName: 'Nova', twinShape: 'bot', arMode: '2d', bulbLevel: 77 },
-    stats: { date: '2026-09-27', tasksDone: 3, glasses: 2, detoxMs: 60000, breaths: 4 },
+    stats: { date: '2026-09-27', tasksDone: 3, glasses: 2, detoxMs: 60000 },
     history: [{ templateId: 'hydrate', finishedAt: 1, title: 'x', icon: 'y' }, { templateId: 'nope', finishedAt: 2 }],
     registry,
     receipt,
@@ -92,7 +92,7 @@ test('backup import rejects junk and drops tampered parts with warnings', async 
 });
 
 test('stats and history sanitisers', () => {
-  assert.deepEqual(sanitizeStats({ date: 'bad', tasksDone: 2.7 }), { date: '1970-01-01', tasksDone: 2, glasses: 0, detoxMs: 0, breaths: 0 });
+  assert.deepEqual(sanitizeStats({ date: 'bad', tasksDone: 2.7 }), { date: '1970-01-01', tasksDone: 2, glasses: 0, detoxMs: 0 });
   assert.deepEqual(sanitizeHistory('nope'), []);
   assert.equal(sanitizeHistory(Array.from({ length: 80 }, (_, i) => ({ templateId: 'stretch', finishedAt: i }))).length, 50);
 });

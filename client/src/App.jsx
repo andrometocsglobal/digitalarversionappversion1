@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { classifyHands, GestureStabilizer, GESTURES } from '@shared/hands/gestures.js';
-import { parseCommand, HELP } from '@shared/voice/commands.js';
-import { GESTURE_TIPS, tipAt } from '@shared/wellness/tips.js';
-import * as Ex from '@shared/wellness/exercises.js';
+import { parseCommand, parseNoteCommand, HELP } from '@shared/voice/commands.js';
+import * as Notes from '@shared/notes/notes.js';
+import { tipAt } from '@shared/wellness/tips.js';
+import { actionForGesture, ActionCooldown, ACTIONS } from '@shared/actions.js';
 import * as Tasks from '@shared/automation/tasks.js';
 import { sanitizePrefs, DEFAULT_PREFS, TONE_RGB } from '@shared/prefs.js';
 import { solve } from '@shared/omni/index.js';
@@ -19,28 +20,31 @@ import { loadJSON, saveJSON, today } from './lib/store.js';
 import { createTwinState, renderFrame, palmAnchor } from './ar/twinRenderer.js';
 
 import TasksPanel from './components/TasksPanel.jsx';
-import TrainPanel from './components/TrainPanel.jsx';
+import GesturesPanel from './components/GesturesPanel.jsx';
 import PrefsPanel from './components/PrefsPanel.jsx';
 import IdentityPanel, { SignatureGlyph } from './components/IdentityPanel.jsx';
 import OmniLab from './components/OmniLab.jsx';
 import XRButton from './components/XRButton.jsx';
 import ArVerifyGate from './components/ArVerifyGate.jsx';
-import DataPanel from './components/DataPanel.jsx';
+import DataPanel, { downloadJSON } from './components/DataPanel.jsx';
+import NotesLayer from './components/NotesLayer.jsx';
+import NotesPanel from './components/NotesPanel.jsx';
 
 const MOCK = new URLSearchParams(window.location.search).has('mock');
 
 const SPEAK_LINES = {
   hydrate: 'Time for a glass of water. Small sips, big focus.',
   posture: 'Roll your shoulders back, lift your chest, and level your chin.',
-  breathe: 'Breathe in for four, and out for four. Follow the pacer.',
+  breathe: 'Breathe in for four, and out for four. Three slow breaths.',
   stretch: 'Spread your fingers wide, then make a gentle fist. Five times.',
   'screen-break': 'Look at something far away for twenty seconds.',
   'detox-hour': 'Time to unplug. I will keep watch while you are away.',
 };
 
 const TABS = [
+  ['notes', 'Notes'],
+  ['gestures', 'Gestures'],
   ['tasks', 'Tasks'],
-  ['train', 'Exercises'],
   ['prefs', 'My twin'],
   ['id', 'Omni ID'],
   ['lab', 'Omni Lab'],
@@ -48,7 +52,10 @@ const TABS = [
   ['help', 'Help'],
 ];
 
-const emptyStats = () => ({ date: today(), tasksDone: 0, glasses: 0, detoxMs: 0, breaths: 0 });
+// Where the twin stands while writing: just left of the paper card (display coords).
+const WRITE_SPOT = { x: 0.47, y: 0.42 };
+
+const emptyStats = () => ({ date: today(), tasksDone: 0, glasses: 0, detoxMs: 0 });
 const shortValue = (r) => {
   const v = String(r.decimal ?? r.value);
   return v.length > 24 ? `a ${v.replace('-', '').length}-digit number` : v;
@@ -72,12 +79,10 @@ export default function App() {
   const reg = useRegistration(idState.identity);
   const camera = useCamera(videoRef);
 
-  const [tab, setTab] = useState('tasks');
+  const [tab, setTab] = useState('notes');
   const [gestureUi, setGestureUi] = useState({ gesture: null, total: 0 });
   const [bubble, setBubble] = useState('');
   const [log, setLog] = useState([]);
-  const [tipIndex, setTipIndex] = useState(0);
-  const [tip, setTip] = useState(tipAt(0));
   const [focus, setFocus] = useState(false);
   const [stats, setStats] = useState(() => {
     const s = loadJSON('omni.stats', null);
@@ -91,19 +96,37 @@ export default function App() {
   const [arStarted, setArStarted] = useState(false);
   const [webglOk, setWebglOk] = useState(null);
   const [pendingBundle, setPendingBundle] = useState('');
+
+  // Voice notes: notepads, documents and sticky notes written by the AR twin.
+  const [notes, setNotesState] = useState(() => Notes.sanitizeNotes(loadJSON('omni.notes', [])));
+  const notesRef = useRef(notes);
+  const setNotes = useCallback((fn) => {
+    const next = typeof fn === 'function' ? fn(notesRef.current) : fn;
+    notesRef.current = next;
+    saveJSON('omni.notes', next);
+    setNotesState(next);
+  }, []);
+  const [activeNoteId, setActiveNoteId] = useState(null);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [dictating, setDictating] = useState(false);
+  const notesLive = useRef({});
+  notesLive.current = { activeNoteId, dictating, noteOpen };
+  const writeAt = useRef({ until: 0, x: 0, y: 0 });
+  const pendingDelete = useRef(null);
   const stageRef = useRef(null);
   const arHostRef = useRef(null);
   const sceneRef = useRef(null);
 
   const queueRef = useRef({ ...Tasks.createQueue(), done: sanitizeHistory(loadJSON('omni.history', [])) });
-  const exerciseRef = useRef(null);
   const twinRef = useRef(createTwinState());
   const stabRef = useRef(new GestureStabilizer(prefs.gestureFrames));
   const bubbleRef = useRef({ text: '', until: 0 });
   const savedBulb = useRef(null);
   const focusStart = useRef(0);
   const announced = useRef('');
-  const tipCooldown = useRef({});
+  const gestureCooldown = useRef(new ActionCooldown(1500));
+  const dispatchRef = useRef(null);
+  const [lastGestureAction, setLastGestureAction] = useState(null);
   const visibleMs = useRef(0);
   const live = useRef({});
   live.current = { prefs, reg, camera, focus, arStarted };
@@ -211,9 +234,6 @@ export default function App() {
           case 'focus-off':
             setFocusMode(false);
             break;
-          case 'exercise:breathing':
-            exerciseRef.current = Ex.start('breathing', now);
-            break;
           case 'scan':
             twinRef.current.scanUntil = now + 2200;
             break;
@@ -238,7 +258,6 @@ export default function App() {
         say(`✅ ${c.title} done! Thank you.`, { voice: true });
         addLog(`${c.icon} ${c.title} completed`);
         setStats((s) => ({ ...s, tasksDone: s.tasksDone + 1, glasses: s.glasses + (c.templateId === 'hydrate' ? 1 : 0) }));
-        if (c.templateId === 'breathe' && exerciseRef.current?.kind === 'breathing') exerciseRef.current = null;
       }
       const st = Tasks.status(r.queue);
       const key = r.queue.active ? `${r.queue.active.uid}:${r.queue.active.index}` : '';
@@ -270,7 +289,7 @@ export default function App() {
     say('Task cancelled.');
   }, [applyQueue, say, setFocusMode]);
 
-  // Twin work loop, exercise clock and detox auto-breaks.
+  // Twin work loop and detox auto-breaks.
   useEffect(() => {
     let lastSecond = Date.now();
     const id = setInterval(() => {
@@ -279,7 +298,6 @@ export default function App() {
         const r = Tasks.tick(queueRef.current, now, live.current.prefs.taskSpeed);
         if (r.effects.length || r.completed.length || r.queue !== queueRef.current) applyQueue(r);
       }
-      if (exerciseRef.current) rerender();
       if (bubbleRef.current.text && now > bubbleRef.current.until) {
         bubbleRef.current = { text: '', until: 0 };
         setBubble('');
@@ -301,30 +319,10 @@ export default function App() {
     return () => clearInterval(id);
   }, [applyQueue, rerender, addLog]);
 
-  // ------------------------------------------------------------- exercises
-  const startExercise = useCallback(
-    (kind) => {
-      exerciseRef.current = Ex.start(kind, Date.now());
-      setTab('train');
-      say(`${Ex.EXERCISES[kind].title}: ${Ex.EXERCISES[kind].blurb}`, { voice: true });
-      addLog(`Started ${Ex.EXERCISES[kind].title}`);
-      rerender();
-    },
-    [say, addLog, rerender],
-  );
-  const stopExercise = useCallback(() => {
-    const ex = exerciseRef.current;
-    exerciseRef.current = null;
-    if (ex) say(`Exercise stopped. Score ${ex.score}.`, { voice: true });
-    rerender();
-  }, [say, rerender]);
-
   const tipIdx = useRef(0);
   const nextTip = useCallback(() => {
     tipIdx.current += 1;
     const t = tipAt(tipIdx.current);
-    setTipIndex(tipIdx.current);
-    setTip(t);
     say(`💡 ${t.title}: ${t.text}`, { voice: true, ms: 8000 });
   }, [say]);
 
@@ -332,33 +330,17 @@ export default function App() {
   const handleGesture = useCallback(
     (gesture, total) => {
       setGestureUi({ gesture, total });
-      if (!gesture) return;
-      const now = Date.now();
-      const ex = exerciseRef.current;
-      if (ex && !ex.done) {
-        const r = Ex.input(ex, { gesture, total }, now);
-        exerciseRef.current = r.state;
-        if (r.event) {
-          say(r.event.message, { voice: r.event.type !== 'step', ms: 2500 });
-          addLog(`🧠 ${r.event.message}`);
-          if (ex.kind === 'breathing' && r.event.type === 'correct') setStats((s) => ({ ...s, breaths: s.breaths + 1 }));
-        }
-        rerender();
-        return;
-      }
-      if (Tasks.status(queueRef.current).waitingForHuman && gesture === 'thumbs_up') {
-        confirmTask();
-        return;
-      }
-      const t = GESTURE_TIPS[gesture];
-      if (t && live.current.reg.can('hands') && now - (tipCooldown.current[gesture] ?? 0) > 8000) {
-        tipCooldown.current[gesture] = now;
-        setTip(t);
-        say(`${GESTURES[gesture].emoji} ${t.title}: ${t.text}`, { voice: true, ms: 7000 });
-        addLog(`${GESTURES[gesture].emoji} ${GESTURES[gesture].label} → ${t.title}`);
-      }
+      const p = live.current.prefs;
+      if (!gesture || !p.gestureActions || !live.current.arStarted || !live.current.reg.can('hands')) return;
+      // Gesture → action, through the same dispatcher voice commands use.
+      const action = actionForGesture(p.gestureMap, gesture);
+      if (!action || !gestureCooldown.current.ready(gesture, Date.now())) return;
+      const g = GESTURES[gesture];
+      setLastGestureAction({ gesture, actionId: action.actionId, at: Date.now() });
+      addLog(`${g.emoji} ${g.label} → ${ACTIONS[action.actionId].label}`);
+      dispatchRef.current?.(action, 'gesture');
     },
-    [say, addLog, rerender, confirmTask],
+    [addLog],
   );
 
   const onFrame = useCallback(
@@ -413,6 +395,11 @@ export default function App() {
         arEnabled: arOn,
         palm,
         avatar3d: !!scene,
+        write: notesLive.current.dictating
+          ? { x: mirror ? 1 - WRITE_SPOT.x : WRITE_SPOT.x, y: WRITE_SPOT.y }
+          : Date.now() < writeAt.current.until
+            ? { x: mirror ? 1 - writeAt.current.x : writeAt.current.x, y: writeAt.current.y }
+            : null,
       });
       if (scene) {
         const f = results.face;
@@ -437,11 +424,192 @@ export default function App() {
 
   const tracking = useTracking(videoRef, { enabled: camera.status === 'live' || MOCK, mock: MOCK, onFrame });
 
-  // ---------------------------------------------------------------- voice
-  const handleCommand = useCallback(
-    async (text, source = 'typed') => {
-      const a = parseCommand(text);
-      addLog(`${source === 'voice' ? '🎙️' : '⌨️'} “${text}” → ${a.type}`);
+  // ------------------------------------------------------------ voice notes
+  const noteById = (id) => notesRef.current.find((n) => n.id === id) ?? null;
+  const updateNote = useCallback((id, fn) => setNotes((list) => list.map((n) => (n.id === id ? fn(n) : n))), [setNotes]);
+  const speakText = useCallback((text) => {
+    const p = live.current.prefs;
+    speak(text, { enabled: p.speech, rate: p.voiceRate, lang: p.voiceLang });
+  }, []);
+
+  const createNoteNow = useCallback(
+    ({ kind = 'notepad', title = null, color = null, text = '' }) => {
+      const stickies = notesRef.current.filter((n) => n.kind === 'sticky').length;
+      const pos = kind === 'sticky' ? { x: 0.03 + (stickies % 5) * 0.19, y: 0.58 + (Math.floor(stickies / 5) % 2) * 0.2 } : {};
+      const named = title || (kind === 'sticky' && text ? text.trim().slice(0, 40) : '');
+      const note = Notes.createNote({ kind, title: named ? named[0].toUpperCase() + named.slice(1) : undefined, color: color ?? undefined, text, ...pos });
+      setNotes((list) => [note, ...list].slice(0, Notes.NOTE_LIMITS.notes));
+      setActiveNoteId(note.id);
+      if (kind !== 'sticky') setNoteOpen(true);
+      // The twin walks over to whatever it is writing.
+      writeAt.current = kind === 'sticky' ? { until: Date.now() + 3500, x: pos.x + 0.06, y: Math.max(0.1, pos.y - 0.12) } : { until: Date.now() + 3500, ...WRITE_SPOT };
+      return note;
+    },
+    [setNotes],
+  );
+
+  /** The note voice writes into: the open notepad/document, or a fresh notepad. */
+  const ensureWritable = useCallback(() => {
+    const cur = noteById(notesLive.current.activeNoteId);
+    if (cur) {
+      if (cur.kind !== 'sticky') setNoteOpen(true);
+      return cur;
+    }
+    return createNoteNow({ kind: 'notepad' });
+  }, [createNoteNow]);
+
+  const runNoteAction = useCallback(
+    (a) => {
+      const active = noteById(notesLive.current.activeNoteId);
+      const needActive = () => {
+        if (active) return true;
+        say('No note is open — say “take a note” first.', { voice: true });
+        return false;
+      };
+      switch (a.type) {
+        case 'note-new': {
+          const n = createNoteNow({ kind: a.kind, title: a.title, color: a.color });
+          if (a.dictate) setDictating(true);
+          say(`${Notes.KIND_ICON[n.kind]} “${n.title}” is ready — I'm writing what you say. Say “stop dictation” when you're done.`, { voice: true, ms: 6000 });
+          addLog(`${Notes.KIND_ICON[n.kind]} New ${n.kind}: ${n.title}`);
+          break;
+        }
+        case 'sticky': {
+          const n = createNoteNow({ kind: 'sticky', color: a.color, text: a.text });
+          setActiveNoteId(n.id);
+          say(`🗒️ Pinned: ${n.text}`, { voice: true, ms: 4000 });
+          addLog(`🗒️ Sticky note: ${n.text}`);
+          break;
+        }
+        case 'note-write': {
+          const n = ensureWritable();
+          updateNote(n.id, (x) => Notes.appendText(x, a.text));
+          writeAt.current = { until: Date.now() + 2500, ...WRITE_SPOT };
+          say(`✍️ ${a.text}`, { ms: 2500 });
+          break;
+        }
+        case 'note-dictation':
+          if (a.toggle ? !notesLive.current.dictating : a.on) {
+            const n = ensureWritable();
+            setDictating(true);
+            say(`🎙️ Dictating into “${n.title}”.`, { ms: 3000 });
+          } else {
+            setDictating(false);
+            say(active ? `💾 Saved “${active.title}”.` : 'Dictation stopped.', { voice: true, ms: 3000 });
+          }
+          break;
+        case 'note-newline':
+          if (needActive()) updateNote(active.id, (x) => Notes.newLine(x));
+          break;
+        case 'note-paragraph':
+          if (needActive()) updateNote(active.id, (x) => Notes.newParagraph(x));
+          break;
+        case 'note-heading':
+          if (needActive()) updateNote(active.id, (x) => Notes.addHeading(x, a.text));
+          break;
+        case 'note-undo':
+          if (needActive()) {
+            updateNote(active.id, (x) => Notes.undoLast(x));
+            say('↩️ Removed the last part.', { ms: 2000 });
+          }
+          break;
+        case 'note-clear':
+          if (needActive()) {
+            updateNote(active.id, (x) => Notes.clearNote(x));
+            say(`🧹 Cleared “${active.title}” (say “scratch that” to undo).`, { ms: 3000 });
+          }
+          break;
+        case 'note-read':
+          if (needActive()) {
+            const body = Notes.noteToText(active) || 'This note is empty.';
+            say(`📖 ${body.slice(0, 160)}${body.length > 160 ? '…' : ''}`, { ms: 8000 });
+            speakText(body.slice(0, 1200));
+          }
+          break;
+        case 'note-close':
+          setNoteOpen(false);
+          setDictating(false);
+          say('Note closed and saved.', { ms: 2500 });
+          break;
+        case 'note-open': {
+          const n = Notes.findNote(notesRef.current, a.title);
+          if (!n) {
+            say(`I couldn't find a note called “${a.title}”.`, { voice: true });
+            break;
+          }
+          setActiveNoteId(n.id);
+          if (n.kind !== 'sticky') setNoteOpen(true);
+          say(`${Notes.KIND_ICON[n.kind]} Opened “${n.title}”.`, { voice: true, ms: 3000 });
+          break;
+        }
+        case 'note-list': {
+          setTab('notes');
+          const titles = [...notesRef.current].sort((x, y) => y.updatedAt - x.updatedAt).slice(0, 5).map((n) => n.title);
+          say(titles.length ? `Your notes: ${titles.join(', ')}.` : 'You have no notes yet.', { voice: true, ms: 7000 });
+          break;
+        }
+        case 'note-delete':
+          if (needActive()) {
+            pendingDelete.current = { kind: 'note', id: active.id, until: Date.now() + 15_000 };
+            say(`Say “confirm delete” within 15 seconds to delete “${active.title}”.`, { voice: true, ms: 8000 });
+          }
+          break;
+        case 'sticky-clear': {
+          const count = notesRef.current.filter((n) => n.kind === 'sticky').length;
+          if (!count) {
+            say('There are no sticky notes.');
+            break;
+          }
+          pendingDelete.current = { kind: 'stickies', until: Date.now() + 15_000 };
+          say(`Say “confirm delete” within 15 seconds to remove ${count} sticky notes.`, { voice: true, ms: 8000 });
+          break;
+        }
+        case 'note-delete-confirm': {
+          const pd = pendingDelete.current;
+          pendingDelete.current = null;
+          if (!pd || pd.until < Date.now()) {
+            say('Nothing is waiting to be deleted.');
+            break;
+          }
+          if (pd.kind === 'stickies') setNotes((list) => list.filter((n) => n.kind !== 'sticky'));
+          else {
+            setNotes((list) => list.filter((n) => n.id !== pd.id));
+            if (notesLive.current.activeNoteId === pd.id) {
+              setActiveNoteId(null);
+              setNoteOpen(false);
+              setDictating(false);
+            }
+          }
+          say('🗑️ Deleted.', { voice: true, ms: 2500 });
+          break;
+        }
+        case 'notes-export':
+          downloadJSON({ schema: 'omni-notes/1', exportedAt: new Date().toISOString(), notes: notesRef.current }, 'omni-notes.json');
+          say(`⬇ Exported ${notesRef.current.length} notes.`, { ms: 3000 });
+          break;
+        default:
+          return false;
+      }
+      return true;
+    },
+    [say, addLog, createNoteNow, ensureWritable, updateNote, speakText, setNotes],
+  );
+
+  /** Dictation: write what was said into the active note. */
+  const dictate = useCallback(
+    (text) => {
+      const n = ensureWritable();
+      updateNote(n.id, (x) => Notes.appendText(x, text));
+      bubbleRef.current = { text: '✍️ Writing…', until: Date.now() + 1500 };
+    },
+    [ensureWritable, updateNote],
+  );
+
+  // ------------------------------------------------------ action dispatcher
+  // One place where the twin acts. Voice, typed text and gestures all land here.
+  const runAction = useCallback(
+    async (a, source = 'typed', text = '') => {
+      if (runNoteAction(a)) return;
       const bulbOk = () => {
         if (reg.can('digital-bulb')) return true;
         say('The digital bulb needs a verified AR registration.');
@@ -450,8 +618,9 @@ export default function App() {
       switch (a.type) {
         case 'bulb':
           if (bulbOk()) {
-            updatePrefs({ bulbOn: a.on });
-            say(a.on ? '💡 Digital bulb on' : 'Digital bulb off');
+            const on = a.toggle ? !live.current.prefs.bulbOn : a.on;
+            updatePrefs({ bulbOn: on });
+            say(on ? '💡 Digital bulb on' : 'Digital bulb off');
           }
           break;
         case 'bulb-adjust':
@@ -467,7 +636,7 @@ export default function App() {
           }
           break;
         case 'ring':
-          if (bulbOk()) updatePrefs({ ringLight: a.on });
+          if (bulbOk()) updatePrefs((p) => ({ ringLight: a.toggle ? !p.ringLight : a.on, bulbOn: true }));
           break;
         case 'torch':
           toggleTorch(a.on);
@@ -475,16 +644,24 @@ export default function App() {
         case 'tip':
           nextTip();
           break;
-        case 'exercise':
-          startExercise(a.kind);
+        case 'twin': {
+          const on = a.toggle ? !live.current.prefs.showTwin : a.on;
+          updatePrefs({ showTwin: on });
+          say(on ? `${live.current.prefs.twinName} is here.` : 'Twin hidden.');
           break;
-        case 'exercise-stop':
-          stopExercise();
+        }
+        case 'mic': {
+          const v = voiceRef.current;
+          if (!v?.supported) say('Voice recognition is not available in this browser.');
+          else if (v.listening) {
+            v.stop();
+            say('🎤 Stopped listening.');
+          } else {
+            v.start();
+            say('🎤 Listening.');
+          }
           break;
-        case 'twin':
-          updatePrefs({ showTwin: a.on });
-          say(a.on ? `${live.current.prefs.twinName} is here.` : 'Twin hidden.');
-          break;
+        }
         case 'speech':
           updatePrefs({ speech: a.on });
           break;
@@ -496,7 +673,8 @@ export default function App() {
           assignTask(a.id);
           break;
         case 'task-done':
-          confirmTask();
+          if (Tasks.status(queueRef.current).waitingForHuman) confirmTask();
+          else if (source === 'gesture') say('Nothing to confirm right now.', { ms: 2000 });
           break;
         case 'task-cancel':
           cancelTask();
@@ -515,13 +693,35 @@ export default function App() {
           break;
         }
         default:
-          say(`Sorry, I didn't catch “${text}”. Say “help”.`);
+          if (source !== 'gesture') say(`Sorry, I didn't catch “${text}”. Say “help”.`);
       }
     },
-    [reg, addLog, say, updatePrefs, toggleTorch, nextTip, startExercise, stopExercise, assignTask, confirmTask, cancelTask],
+    [reg, say, updatePrefs, toggleTorch, nextTip, assignTask, confirmTask, cancelTask, runNoteAction],
+  );
+  dispatchRef.current = runAction;
+
+  // ---------------------------------------------------------------- voice
+  const handleCommand = useCallback(
+    async (text, source = 'typed') => {
+      if (source === 'voice' && !live.current.prefs.voiceActions) return; // voice → action switched off
+      // While dictating, only note controls are commands; everything else is written down.
+      if (notesLive.current.dictating) {
+        const nc = parseNoteCommand(text);
+        addLog(`✍️ “${text}”${nc ? ` → ${nc.type}` : ''}`);
+        if (nc) runAction(nc, source, text);
+        else dictate(text);
+        return;
+      }
+      const a = parseCommand(text);
+      addLog(`${source === 'voice' ? '🎙️' : '⌨️'} “${text}” → ${a.type}`);
+      runAction(a, source, text);
+    },
+    [addLog, runAction, dictate],
   );
 
   const voice = useVoice({ lang: prefs.voiceLang, onCommand: (t) => handleCommand(t, 'voice') });
+  const voiceRef = useRef(voice);
+  voiceRef.current = voice;
 
   // Greet once the verified AR element is started.
   const greeted = useRef(false);
@@ -545,6 +745,7 @@ export default function App() {
       prefs,
       stats,
       history: queueRef.current.done,
+      notes: notesRef.current,
       registry: reg.registry,
       receipt: reg.receipt,
       passport: idState.identity?.passport ?? null,
@@ -557,6 +758,10 @@ export default function App() {
     updatePrefs(r.prefs);
     setStats(r.stats);
     queueRef.current = { ...queueRef.current, done: r.history };
+    if (r.notes.length) {
+      const ids = new Set(r.notes.map((n) => n.id));
+      setNotes([...r.notes, ...notesRef.current.filter((n) => !ids.has(n.id))]);
+    }
     saveJSON('omni.history', r.history);
     if (r.registry && r.registry.integrity !== reg.registry?.integrity) await reg.importRegistry(r.registry);
     if (r.receipt && r.receipt.integrity === (r.registry ?? reg.registry)?.integrity) reg.restoreReceipt(r.receipt);
@@ -569,7 +774,6 @@ export default function App() {
   // --------------------------------------------------------------- render
   const q = queueRef.current;
   const qStatus = Tasks.status(q);
-  const exView = exerciseRef.current ? Ex.view(exerciseRef.current, Date.now()) : null;
   const mirror = camera.facingMode === 'user';
   const rgb = TONE_RGB[prefs.bulbTone].join(',');
   const g = gestureUi.gesture ? GESTURES[gestureUi.gesture] : null;
@@ -633,7 +837,11 @@ export default function App() {
                 prefs={prefs}
                 webglOk={webglOk}
                 onChange={updatePrefs}
-                onStart={() => setArStarted(true)}
+                onStart={() => {
+                  setArStarted(true);
+                  // Hands-free from here: the click is the user gesture browsers need for the mic.
+                  if (prefs.autoListen && voice.supported && reg.can('voice') && !voice.listening) voice.start();
+                }}
                 onSkip={() => setArStarted(true)}
               />
             )}
@@ -655,12 +863,18 @@ export default function App() {
               <span className="chip muted" data-testid="tracker-status">tracker: {tracking.status}</span>
             </div>
 
-            {exView && (
-              <div className="exercise-hud" data-testid="exercise-hud">
-                <small>{exView.title}</small>
-                <div className="exercise-prompt" data-testid="exercise-prompt">{exView.prompt}</div>
-                <small>{exView.detail}</small>
-              </div>
+            {arStarted && (
+              <NotesLayer
+                active={notes.find((n) => n.id === activeNoteId) ?? null}
+                open={noteOpen}
+                dictating={dictating}
+                stickies={notes.filter((n) => n.kind === 'sticky')}
+                onMoveSticky={(id, x, y) => updateNote(id, (n) => Notes.moveSticky(n, x, y))}
+                onRemoveSticky={(id) => setNotes((list) => list.filter((n) => n.id !== id))}
+                reducedMotion={prefs.reducedMotion}
+                twinName={prefs.twinName}
+                caption={voice.listening ? voice.heard : null}
+              />
             )}
 
             <div className="twin-says" aria-live="polite" data-testid="twin-says">{bubble}</div>
@@ -775,10 +989,47 @@ export default function App() {
           {tab === 'tasks' && (
             <TasksPanel queue={q} qStatus={qStatus} onAssign={assignTask} onConfirm={confirmTask} onCancel={cancelTask} stats={stats} prefs={prefs} />
           )}
-          {tab === 'train' && <TrainPanel exerciseView={exView} onStart={startExercise} onStop={stopExercise} tip={tip} onNextTip={nextTip} tipIndex={tipIndex} />}
+          {tab === 'gestures' && <GesturesPanel prefs={prefs} onChange={updatePrefs} last={lastGestureAction} voice={voice} />}
           {tab === 'prefs' && <PrefsPanel prefs={prefs} onChange={updatePrefs} onReset={() => updatePrefs({ ...DEFAULT_PREFS })} />}
           {tab === 'id' && <IdentityPanel idState={idState} prefs={prefs} initialBundle={pendingBundle} />}
           {tab === 'lab' && <OmniLab lastVoiceResult={lastOmni} />}
+          {tab === 'notes' && (
+            <NotesPanel
+              notes={notes}
+              active={notes.find((n) => n.id === activeNoteId) ?? null}
+              dictating={dictating}
+              listening={voice.listening}
+              twinName={prefs.twinName}
+              onCreate={(kind) => {
+                createNoteNow({ kind });
+              }}
+              onSelect={(id) => {
+                setActiveNoteId(id);
+                if (noteById(id)?.kind !== 'sticky') setNoteOpen(true);
+              }}
+              onEdit={(id, text) => updateNote(id, (n) => Notes.setText(n, text))}
+              onRename={(id, title) => updateNote(id, (n) => Notes.renameNote(n, title))}
+              onColor={(id, color) => updateNote(id, (n) => ({ ...n, color }))}
+              onDelete={(id) => {
+                setNotes((list) => list.filter((n) => n.id !== id));
+                if (id === activeNoteId) {
+                  setActiveNoteId(null);
+                  setNoteOpen(false);
+                  setDictating(false);
+                }
+              }}
+              onDictation={(on) => {
+                runNoteAction({ type: 'note-dictation', on });
+                if (on && voice.supported && !voice.listening) voice.start();
+              }}
+              onImport={(data) => {
+                const incoming = Notes.sanitizeNotes(data?.notes ?? data);
+                const ids = new Set(incoming.map((n) => n.id));
+                setNotes([...incoming, ...notesRef.current.filter((n) => !ids.has(n.id))].slice(0, Notes.NOTE_LIMITS.notes));
+                return incoming.length;
+              }}
+            />
+          )}
           {tab === 'data' && <DataPanel reg={reg} hasIdentity={!!idState.identity} onExport={exportBackup} onImport={importBackup} />}
           {tab === 'help' && (
             <section className="panel">
@@ -787,7 +1038,10 @@ export default function App() {
                 {HELP.map((h) => <li key={h}><code>{h}</code></li>)}
               </ul>
               <h3>Gestures</h3>
-              <p className="muted">👍 thumbs up confirms your part of a task · during exercises, fingers answer · otherwise each gesture brings a wellness tip.</p>
+              <p className="muted">
+                Each gesture triggers an action you choose in the Gestures tab — by default ✌️ take a note, ✊ stop dictation, ☝️ new line, 👎 scratch
+                that, 🤘 sticky note, 🤙 read it back, 👍 done. Show an open palm and {prefs.twinName} stands on it.
+              </p>
               <h3>Privacy</h3>
               <p className="muted">Everything runs in your browser — there is no server. Camera, hand and face processing never leave the device; your data moves only when you export a JSON file (Data tab).</p>
               <h3>AR on every device</h3>

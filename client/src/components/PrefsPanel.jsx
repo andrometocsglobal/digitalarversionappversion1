@@ -28,6 +28,7 @@ export default function PrefsPanel({ prefs, onChange, onReset }) {
         <label className="check"><input type="checkbox" checked={prefs.showTwin} onChange={set('showTwin')} /> Show twin</label>
         <label className="check"><input type="checkbox" checked={prefs.mirrorClone} onChange={set('mirrorClone')} /> Mirror-clone my hands</label>
         <label className="check"><input type="checkbox" checked={prefs.speech} onChange={set('speech')} /> Twin speaks aloud</label>
+        <label className="check"><input type="checkbox" checked={prefs.autoListen} onChange={set('autoListen')} /> Listen automatically when AR starts (hands-free)</label>
         <label>Voice speed {prefs.voiceRate.toFixed(2)}×<input type="range" min="0.5" max="2" step="0.05" value={prefs.voiceRate} onChange={set('voiceRate')} /></label>
         <label>Language
           <select value={prefs.voiceLang} onChange={set('voiceLang')}>

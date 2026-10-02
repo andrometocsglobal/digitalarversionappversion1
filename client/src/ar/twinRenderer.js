@@ -159,7 +159,7 @@ function drawBubble(ctx, x, y, text, W) {
  * opts: { hands, face, mirror, prefs, task: { templateId, waitingForHuman, progress } | null, bubble, now }
  */
 export function renderFrame(ctx, W, H, twin, opts) {
-  const { hands = [], face, mirror, prefs, task, bubble, now, arEnabled, palm = null, avatar3d = false } = opts;
+  const { hands = [], face, mirror, prefs, task, bubble, now, arEnabled, palm = null, avatar3d = false, write = null } = opts;
   ctx.clearRect(0, 0, W, H);
   const color = prefs.twinColor;
   const X = (x) => (mirror ? 1 - x : x);
@@ -205,7 +205,7 @@ export function renderFrame(ctx, W, H, twin, opts) {
     ctx.restore();
   }
 
-  // Where should the twin be? task > palm > placed > face > home.
+  // Where should the twin be? task > writing > palm > placed > face > home.
   let tx = 0.8;
   let ty = 0.22;
   let ts = 1;
@@ -215,6 +215,10 @@ export function renderFrame(ctx, W, H, twin, opts) {
     anchor = 'task';
     tx = station.x + (station.x > 0.5 ? -0.08 : 0.08);
     ty = station.y + (task.waitingForHuman ? -0.1 : 0);
+  } else if (write) {
+    anchor = 'writing'; // beside the note it is writing (raw camera coords)
+    tx = write.x;
+    ty = write.y;
   } else if (palm) {
     anchor = 'palm';
     tx = palm.x;

@@ -50,9 +50,9 @@ export const TASK_TEMPLATES = {
     icon: '🌬️',
     steps: [
       t('Warm the light to a calm tone', 1000, 'bulb-warm'),
-      t('Start the breathing pacer', 1000, 'exercise:breathing'),
+      t('Dim to a calm, warm glow', 1000, 'bulb-dim'),
       t('Count the rhythm for you', 1600, 'speak'),
-      h('Breathe with the pacer'),
+      h('Take three slow, deep breaths'),
       t('Save your calm score', 800, 'log'),
     ],
   },

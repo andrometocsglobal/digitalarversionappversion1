@@ -3,12 +3,9 @@ import assert from 'node:assert/strict';
 import { classifyHand, classifyHands, GestureStabilizer } from '../../shared/hands/gestures.js';
 import { makeHand, POSES, countPose } from '../../shared/hands/synthetic.js';
 import { parseCommand, normalize } from '../../shared/voice/commands.js';
-import * as Ex from '../../shared/wellness/exercises.js';
-import { GESTURE_TIPS, tipAt, GENERAL_TIPS } from '../../shared/wellness/tips.js';
+import { tipAt, GENERAL_TIPS } from '../../shared/wellness/tips.js';
 import * as Tasks from '../../shared/automation/tasks.js';
 import { sanitizePrefs, DEFAULT_PREFS, profileFromPrefs } from '../../shared/prefs.js';
-
-const seeded = (seed = 1) => () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
 
 // ---------------------------------------------------------------- gestures
 
@@ -60,10 +57,6 @@ test('voice commands map to actions', () => {
     ['ring light on', { type: 'ring', on: true }],
     ['torch off', { type: 'torch', on: false }],
     ['give me a wellness tip', { type: 'tip' }],
-    ["let's start finger math", { type: 'exercise', kind: 'finger-math' }],
-    ['memory game', { type: 'exercise', kind: 'mirror-sequence' }],
-    ['breathing exercise', { type: 'exercise', kind: 'breathing' }],
-    ['stop the exercise', { type: 'exercise-stop' }],
     ['hide twin', { type: 'twin', on: false }],
     ['show my clone', { type: 'twin', on: true }],
     ['mute', { type: 'speech', on: false }],
@@ -85,60 +78,7 @@ test('voice commands map to actions', () => {
   assert.equal(normalize('Twenty Three thousand'), '23000');
 });
 
-// ---------------------------------------------------------------- exercises
-
-test('finger math: correct count scores with AP streak points and levels up geometrically', () => {
-  let s = Ex.start('finger-math', 0, seeded(7));
-  assert.match(Ex.view(s, 0).prompt, /^\d+ [+−] \d+ = \?$/);
-  let t = 0;
-  for (let i = 0; i < 6; i++) {
-    const wrong = Ex.input(s, { total: (s.question.answer + 1) % 11 }, (t += 500));
-    assert.equal(wrong.event, null);
-    const r = Ex.input(s, { total: s.question.answer }, (t += 500));
-    assert.ok(['correct', 'level'].includes(r.event.type));
-    s = r.state;
-  }
-  assert.equal(s.streak, 6);
-  assert.equal(s.score, Ex.streakPoints(6)); // 21 = 1+..+6
-  assert.equal(s.level, Ex.levelFor(21)); // thresholds 10, 30, 70...
-  assert.equal(Ex.levelFor(9), 0);
-  assert.equal(Ex.levelFor(10), 1);
-  assert.equal(Ex.levelFor(30), 2);
-  assert.ok(Ex.focusSpeed(s) > 0);
-});
-
-test('mirror memory: shows, then accepts the sequence, grows, and ends after 3 mistakes', () => {
-  let s = Ex.start('mirror-sequence', 0, seeded(3));
-  for (let i = 1; i < s.sequence.length; i++) assert.notEqual(s.sequence[i], s.sequence[i - 1]);
-  assert.equal(Ex.input(s, { gesture: s.sequence[0] }, 100).event, null, 'input ignored while showing');
-  let now = s.showUntil + 10;
-  for (const g of s.sequence) {
-    const r = Ex.input(s, { gesture: g }, (now += 10));
-    s = r.state;
-  }
-  assert.equal(s.sequence.length, 4);
-  assert.equal(s.score, 1);
-  now = s.showUntil + 10;
-  const wrongGesture = ['fist', 'open_palm', 'peace', 'point', 'thumbs_up'].find((g) => g !== s.sequence[0]);
-  for (let i = 0; i < 3; i++) {
-    s = Ex.input(s, { gesture: wrongGesture }, now).state;
-    now = s.showUntil + 10;
-  }
-  assert.equal(s.done, true);
-});
-
-test('breathing: palm on inhale then fist on exhale completes a breath', () => {
-  let s = Ex.start('breathing', 0);
-  assert.equal(Ex.input(s, { gesture: 'fist' }, 100).event, null);
-  s = Ex.input(s, { gesture: 'open_palm' }, 500).state;
-  const r = Ex.input(s, { gesture: 'fist' }, 4500);
-  assert.equal(r.event.type, 'correct');
-  assert.equal(r.state.cycles, 1);
-  assert.match(Ex.view(r.state, 8200).prompt, /Breathe in/);
-});
-
-test('every gesture has a tip and tips rotate', () => {
-  for (const g of Object.keys(POSES)) assert.ok(GESTURE_TIPS[g]?.text, g);
+test('tips rotate', () => {
   assert.equal(tipAt(GENERAL_TIPS.length), tipAt(0));
   assert.equal(tipAt(-1), GENERAL_TIPS.at(-1));
 });

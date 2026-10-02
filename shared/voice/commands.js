@@ -39,8 +39,6 @@ export const HELP = [
   'ring light on / off',
   'torch on / off',
   'next tip',
-  'start finger math / memory game / breathing',
-  'stop exercise',
   'show twin / hide twin',
   'remind me to drink water / screen break / posture / stretch / detox',
   'done (finish your part of the task)',
@@ -48,16 +46,75 @@ export const HELP = [
   'geometric sum ratio 2 power 3 for 5 terms',
   'harmonic sum power 2 from 1 to 1 million',
   'mute / unmute',
+  'take a note · new document called Project plan',
+  '(dictate) … comma · period · question mark · new line',
+  'heading Budget · scratch that · read it back · stop dictation',
+  'yellow sticky note call mom · clear sticky notes',
+  'open note shopping · list notes · export notes',
 ];
+
+// ------------------------------------------------------------ voice notes
+// Matched on the raw transcript (not normalize()) so dictated words keep their
+// original spelling — "call Mum at five" must not become "call mum at 5".
+
+const KIND = { note: 'notepad', notes: 'notepad', notepad: 'notepad', 'note pad': 'notepad', document: 'document', doc: 'document', 'sticky note': 'sticky', sticky: 'sticky' };
+const COLOR = '(yellow|pink|green|blue|orange|purple)';
+
+/** Note-control commands only (used alone while dictating). */
+export function parseNoteCommand(text) {
+  const t = String(text ?? '').replace(/\s+/g, ' ').trim().replace(/[.!?]+$/, '');
+  if (!t) return null;
+  let m;
+
+  if (/^(?:start|begin|resume|take) (?:dictation|dictating|writing|typing)$|^take notes?$/i.test(t)) {
+    return /^take notes?$/i.test(t) ? { type: 'note-new', kind: 'notepad', title: null, dictate: true } : { type: 'note-dictation', on: true };
+  }
+  if (/^(?:stop|end|finish|pause) (?:dictation|dictating|writing|typing|the note|note|notes)$|^that'?s all$/i.test(t)) return { type: 'note-dictation', on: false };
+
+  m = new RegExp(`^(?:add |create |make |new |put |pin )?(?:a |an )?(?:${COLOR} )?sticky(?: note)?(?: (?:saying|that says|with|to|for|about|reading))?[:,]? (.+)$`, 'i').exec(t);
+  if (m && !/^(?:called|named|titled)\b/i.test(m[2]) && !/^notes?$/i.test(m[2])) {
+    const color = new RegExp(`^(?:add |create |make |new |put |pin )?(?:a |an )?${COLOR} `, 'i').exec(t)?.[1]?.toLowerCase();
+    return { type: 'sticky', text: m[2], color: color ?? null };
+  }
+
+  m = /^(?:open|show|switch to|go to) (?:the |my )?(?:note|notepad|note pad|document|doc)s? (?:called |named |titled )?(.+)$/i.exec(t);
+  if (m && !/^(?:list|all)$/i.test(m[1])) return { type: 'note-open', title: m[1] };
+
+  m = new RegExp(`^(?:create|make|open|start|new|begin)(?: a| an| the| my)?(?: new)?(?: ${COLOR})? (sticky note|sticky|note pad|notepad|notes|note|document|doc)(?: (?:called|named|titled|for|about) (.+))?$`, 'i').exec(t);
+  if (m) return { type: 'note-new', kind: KIND[m[2].toLowerCase()], title: m[3] ?? null, color: m[1]?.toLowerCase() ?? null, dictate: true };
+  m = /^take (?:a |an )?(note|notes|document) (?:called|named|titled|for|about) (.+)$|^take (?:a )?note$/i.exec(t);
+  if (m) return { type: 'note-new', kind: KIND[(m[1] ?? 'note').toLowerCase()], title: m[2] ?? null, dictate: true };
+
+  m = /^(?:write|type|note down|jot down|jot|add line|write down)(?: that)?[:,]? (.+)$/i.exec(t);
+  if (m) return { type: 'note-write', text: m[1] };
+
+  if (/^(?:new|next) line$/i.test(t)) return { type: 'note-newline' };
+  if (/^(?:new|next) paragraph$/i.test(t)) return { type: 'note-paragraph' };
+  m = /^(?:add )?(?:a )?(?:heading|title|section|subheading)(?: called| named)?[:,]? (.+)$/i.exec(t);
+  if (m) return { type: 'note-heading', text: m[1] };
+  if (/^(?:undo|scratch that|delete that|remove that|delete (?:the )?last (?:line|sentence|part|bit))$/i.test(t)) return { type: 'note-undo' };
+  if (/^clear (?:the |this |my )?(?:note|notepad|note pad|document|doc)$/i.test(t)) return { type: 'note-clear' };
+  if (/^(?:read|read it|read back|read it back|read (?:the |this |my )?(?:note|notepad|document|doc)(?: back| aloud| out)?)$/i.test(t)) return { type: 'note-read' };
+  if (/^(?:close|hide) (?:the |this |my )?(?:note|notepad|note pad|document|doc)$/i.test(t)) return { type: 'note-close' };
+  if (/^(?:list|show) (?:my |all |all my )?notes$/i.test(t)) return { type: 'note-list' };
+  if (/^delete (?:the |this )?(?:note|notepad|document|doc)$/i.test(t)) return { type: 'note-delete' };
+  if (/^(?:yes )?confirm delete$/i.test(t)) return { type: 'note-delete-confirm' };
+  if (/^(?:clear|remove|delete) (?:all )?(?:the )?sticky notes$/i.test(t)) return { type: 'sticky-clear' };
+  if (/^(?:export|download|save) (?:all )?(?:my )?notes$/i.test(t)) return { type: 'notes-export' };
+  return null;
+}
 
 /**
  * Returns an action: { type, ... } or { type: 'unknown', text }.
- * Types: bulb, bulb-adjust, bulb-level, bulb-tone, ring, torch, tip, exercise,
- * exercise-stop, twin, speech, help, omni.
+ * Types: bulb, bulb-adjust, bulb-level, bulb-tone, ring, torch, tip, task, task-done,
+ * task-cancel, twin, speech, help, omni, and the note-* / sticky types.
  */
 export function parseCommand(text) {
   const s = normalize(text);
   if (!s) return { type: 'unknown', text: '' };
+
+  const note = parseNoteCommand(text);
+  if (note) return note;
 
   // --- Omni maths first: "sum of ..." phrases contain words like "from"/"to".
   let m = /\bsum of (?:the )?(?:(squares|square|cubes|cube)|(?:power|powers) (?:of )?(\d+)|(\d+) powers?)\b.*?\bfrom (-?\d+) to (-?\d+)/.exec(s);
@@ -86,16 +143,6 @@ export function parseCommand(text) {
   }
   if (/\b(cancel|skip) (the )?task\b/.test(s)) return { type: 'task-cancel' };
   for (const [re, id] of TASK_PHRASES) if (re.test(s)) return { type: 'task', id };
-
-  // --- Exercises
-  if (/\b(stop|end|quit|finish|cancel)\b.*\b(exercise|game|session|math|memory|breathing)\b/.test(s)) {
-    return { type: 'exercise-stop' };
-  }
-  if (/\b(math|maths|finger math|count|counting)\b/.test(s) && /\b(start|play|begin|do|let's)\b/.test(s)) {
-    return { type: 'exercise', kind: 'finger-math' };
-  }
-  if (/\b(memory|mirror|sequence|simon)\b/.test(s)) return { type: 'exercise', kind: 'mirror-sequence' };
-  if (/\bbreath(e|ing)?\b/.test(s)) return { type: 'exercise', kind: 'breathing' };
 
   // --- Lighting
   m = /\bbrightness (?:to )?(\d{1,3})\b/.exec(s) ?? /\b(\d{1,3}) ?(?:%|percent)\b/.exec(s);

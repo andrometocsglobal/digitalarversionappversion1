@@ -71,11 +71,6 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 0.85em; }
 .stage-msg { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; padding: 1rem; background: rgba(7, 28, 38, 0.8); }
 .hud-top { position: absolute; top: 0.6rem; left: 0.6rem; right: 0.6rem; display: flex; gap: 0.5rem; flex-wrap: wrap; pointer-events: none; }
 .chip { background: rgba(7, 28, 38, 0.8); border: 1px solid var(--line); border-radius: 999px; padding: 0.25rem 0.7rem; font-size: 0.9rem; }
-.exercise-hud {
-  position: absolute; left: 50%; bottom: 0.8rem; transform: translateX(-50%); text-align: center; min-width: min(90%, 320px);
-  background: rgba(7, 28, 38, 0.85); border: 1px solid var(--gold); border-radius: var(--radius); padding: 0.5rem 1rem;
-}
-.exercise-prompt { font-size: clamp(1.4rem, 4vw, 2.2rem); font-weight: 800; color: var(--gold); }
 .twin-says { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .focus-overlay { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; padding: 1rem; background: rgba(7, 28, 38, 0.92); }
 .focus-overlay h2 { font-size: 2rem; margin: 0 0 0.5rem; }
@@ -125,8 +120,6 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 0.85em; }
 @media (max-width: 420px) { .stats { grid-template-columns: repeat(2, 1fr); } }
 .done-list { font-size: 0.9rem; padding-left: 1.1rem; }
 
-.exercise-stats { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: center; background: var(--panel-2); padding: 0.5rem 0.7rem; border-radius: 10px; }
-.exercise-stats b { color: var(--gold); }
 .tip { background: var(--panel-2); border-left: 3px solid var(--gold); padding: 0.6rem 0.8rem; border-radius: 8px; }
 .tip p { margin: 0.3rem 0 0.5rem; }
 .gesture-list, .help-list { padding-left: 1.1rem; display: grid; gap: 0.25rem; font-size: 0.9rem; }
@@ -183,6 +176,58 @@ fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 0.25rem; font-s
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 0.8rem; font-size: 0.88rem; margin: 0.4rem 0; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; word-break: break-all; }
+
+/* Voice notes in AR */
+.notes-layer { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.ar-note {
+  position: absolute; right: 3%; top: 14%; width: min(46%, 340px); max-height: 66%; overflow: hidden; pointer-events: auto;
+  background: #fffdf5; color: #1f2937; border-radius: 10px; padding: 0.6rem 0.8rem 0.7rem;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45); transform: perspective(700px) rotateY(-6deg) rotateX(2deg);
+  background-image: repeating-linear-gradient(transparent 0 1.42rem, #dbeafe 1.42rem 1.5rem); animation: note-in 0.35s both;
+}
+.ar-note.document { background-image: none; border-top: 6px solid var(--teal); }
+.ar-note-head { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.25rem; margin-bottom: 0.3rem; }
+.ar-note-head b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ar-note-pen { animation: pen 0.5s ease-in-out infinite alternate; }
+.ar-note-body { font: 500 0.95rem/1.5rem 'Segoe Print', 'Bradley Hand', 'Comic Sans MS', cursive; white-space: pre-wrap; word-break: break-word; }
+.ar-note-body p { margin: 0; }
+.ar-note-body h3 { margin: 0 0 0.2rem; font: 700 1.05rem/1.5rem system-ui, sans-serif; }
+.ar-note-body h4 { margin: 0.2rem 0 0; font: 700 0.95rem/1.5rem system-ui, sans-serif; color: var(--teal); }
+.ar-note-hint { display: block; margin-top: 0.3rem; color: #6b7280; font-size: 0.72rem; }
+.caret { display: inline-block; width: 2px; height: 1.1em; background: #1f2937; vertical-align: text-bottom; animation: blink 1s steps(1) infinite; }
+.ar-sticky {
+  position: absolute; width: clamp(96px, 15%, 150px); min-height: 84px; padding: 0.5rem 0.55rem 0.6rem; pointer-events: auto; touch-action: none; cursor: grab;
+  color: #1f2937; border-radius: 3px; box-shadow: 0 8px 18px rgba(0, 0, 0, 0.4); transform: rotate(-2deg); animation: note-in 0.3s both;
+  font: 600 0.88rem/1.25 'Segoe Print', 'Bradley Hand', 'Comic Sans MS', cursive; word-break: break-word;
+}
+.ar-sticky:nth-child(even) { transform: rotate(2.5deg); }
+.ar-sticky:active { cursor: grabbing; }
+.ar-sticky p { margin: 0.2rem 0 0; }
+.ar-sticky-x { position: absolute; top: 2px; right: 2px; padding: 0 0.35rem; line-height: 1.2; background: transparent; border: 0; color: #374151; font-size: 1rem; }
+.voice-caption { position: absolute; left: 0.6rem; bottom: 0.6rem; max-width: 70%; background: rgba(7, 28, 38, 0.85); border: 1px solid var(--line); border-radius: 999px; padding: 0.25rem 0.75rem; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@keyframes note-in { from { opacity: 0; transform: translateY(10px) scale(0.96); } }
+@keyframes pen { to { transform: translate(2px, -2px) rotate(-8deg); } }
+@keyframes blink { 50% { opacity: 0; } }
+@media (max-width: 600px) { .ar-note { width: 60%; top: 18%; } }
+
+.note-editor { display: grid; gap: 0.4rem; background: var(--panel-2); border-radius: var(--radius); padding: 0.6rem; margin: 0.6rem 0; }
+.note-editor .row input { flex: 1; }
+.note-editor select { width: auto; }
+.note-list { list-style: none; padding: 0; margin: 0.6rem 0; display: grid; gap: 0.3rem; }
+.note-list button { width: 100%; display: flex; gap: 0.5rem; align-items: center; text-align: left; }
+.note-list-main { display: grid; min-width: 0; }
+.note-list-main small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Gestures tab */
+.mode-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem; margin: 0.6rem 0; }
+.mode-card { display: flex; gap: 0.6rem; align-items: flex-start; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.6rem; cursor: pointer; }
+.mode-card.on { border-color: var(--cyan); }
+.mode-card span { display: grid; gap: 0.15rem; }
+.mode-card small { color: var(--muted); }
+.gesture-map { display: grid; gap: 0.35rem; }
+.gesture-map label { display: grid; grid-template-columns: minmax(110px, 0.8fr) 1.2fr; gap: 0.5rem; align-items: center; padding: 0.25rem 0.4rem; border-radius: 8px; font-size: 0.9rem; }
+.gesture-map label.fired { background: rgba(234, 179, 8, 0.18); }
+.gesture-name { white-space: nowrap; }
 
 .focus-mode .side, .focus-mode .dock { opacity: 0.35; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

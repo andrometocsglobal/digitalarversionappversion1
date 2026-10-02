@@ -3,7 +3,41 @@
 // gestures are deterministic.
 import { test, expect } from '@playwright/test';
 
+// A scriptable SpeechRecognition, so the real voice pipeline (auto-start,
+// recognition events, parsing, dispatch) runs in headless Chrome.
+function installFakeSpeech() {
+  window.__speech = {
+    recs: [],
+    say(text) {
+      const r = this.recs.filter((x) => x.running).at(-1);
+      if (!r) throw new Error('microphone is not listening');
+      const result = [{ transcript: text }];
+      result.isFinal = true;
+      r.onresult?.({ resultIndex: 0, results: [result] });
+    },
+  };
+  class FakeRecognition {
+    constructor() {
+      this.running = false;
+      window.__speech.recs.push(this);
+    }
+    start() {
+      this.running = true;
+    }
+    stop() {
+      this.running = false;
+      this.onend?.();
+    }
+    abort() {
+      this.stop();
+    }
+  }
+  window.SpeechRecognition = FakeRecognition;
+  window.webkitSpeechRecognition = FakeRecognition;
+}
+
 async function open(page, prefs = {}, { start = true } = {}) {
+  await page.addInitScript(installFakeSpeech);
   await page.addInitScript((p) => {
     if (!sessionStorage.getItem('seeded')) {
       localStorage.clear();
@@ -37,44 +71,128 @@ test('opens the camera and verifies + registers the AR element on load @mobile',
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
 
-test('hand gestures show wellness tips', async ({ page }) => {
-  await open(page);
-  await page.evaluate(() => window.__omni.pose('peace'));
-  await expect(page.getByTestId('gesture')).toContainText('Peace');
-  await expect(page.getByTestId('twin-says')).toContainText('Two good things');
-  await page.evaluate(() => window.__omni.pose('open_palm'));
-  await expect(page.getByTestId('gesture')).toContainText('Open palm');
-  await expect(page.getByTestId('twin-says')).toContainText('Box breathing');
+/** Show a gesture until the app reports it (= its action fired), then drop the hand. */
+async function gesture(page, pose, label) {
+  await page.evaluate((g) => window.__omni.pose(g), pose);
+  await expect(page.getByTestId('gesture')).toContainText(label);
   await page.evaluate(() => window.__omni.clear());
   await expect(page.getByTestId('gesture')).toContainText('Show a hand');
-  await expect(page.getByTestId('activity')).toContainText('Peace → Two good things');
+}
+
+const speak = (page, text) => page.evaluate((t) => window.__speech.say(t), text);
+
+test('voice → AR notes, hands-free: notepad dictation, sticky note, document — no Send button', async ({ page }) => {
+  await open(page);
+  // The microphone started by itself when AR started.
+  await expect(page.getByTestId('mic-toggle')).toContainText('Listening');
+
+  await speak(page, 'take a note called Shopping list');
+  await expect(page.getByTestId('ar-note')).toContainText('Shopping list');
+  await expect(page.getByTestId('stage')).toHaveAttribute('data-anchor', 'writing');
+  await expect(page.getByTestId('voice-caption')).toContainText('Shopping list');
+
+  const text = page.getByTestId('ar-note-text');
+  await speak(page, 'milk comma eggs period');
+  await speak(page, 'light on'); // while dictating this is text, not a command
+  await expect(text).toContainText('Milk, eggs. Light on');
+  await expect(page.getByTestId('bulb-wash')).toBeHidden();
+  await speak(page, 'scratch that');
+  await expect(text).not.toContainText('Light on');
+  await speak(page, 'new line');
+  await speak(page, 'bread and butter');
+  await expect(text).toContainText('Bread and butter');
+  await speak(page, 'stop dictation');
+  await expect(page.getByTestId('twin-says')).toContainText('Saved “Shopping list”');
+
+  await speak(page, 'light on'); // a command again
+  await expect(page.getByTestId('bulb-wash')).toBeVisible();
+
+  await speak(page, 'yellow sticky note call Mum at five');
+  await expect(page.getByTestId('ar-sticky')).toContainText('Call Mum at five');
+
+  await speak(page, 'new document called Project plan');
+  await speak(page, 'heading budget');
+  await speak(page, 'we spend less period');
+  await speak(page, "that's all");
+  await expect(text).toContainText('Budget');
+  await expect(text).toContainText('We spend less.');
+
+  await expect(page.getByTestId('note-list')).toContainText('Shopping list');
+  await expect(page.getByTestId('note-list')).toContainText('Project plan');
+  await expect(page.getByTestId('note-list')).toContainText('Call Mum at five');
+
+  // Everything is saved on the device.
+  await page.reload();
+  await page.getByTestId('ar-start').click();
+  await expect(page.getByTestId('ar-sticky')).toContainText('Call Mum at five');
+  await speak(page, 'open note shopping');
+  await expect(page.getByTestId('ar-note-text')).toContainText('Milk, eggs.');
 });
 
-test('finger math brain exercise scores answers shown with fingers', async ({ page }) => {
+test('gesture → AR actions: ✌️ note, ☝️ new line, 👎 undo, ✊ save, 🤘 sticky, 🤙 read back', async ({ page }) => {
   await open(page);
-  await page.getByTestId('tab-train').click();
-  await page.getByTestId('start-finger-math').click();
-  for (let round = 1; round <= 3; round++) {
-    const prompt = await page.getByTestId('exercise-prompt').textContent();
-    const [, a, op, b] = /(\d+) ([+−]) (\d+)/.exec(prompt);
-    const answer = op === '+' ? Number(a) + Number(b) : Number(a) - Number(b);
-    // Drop the hand first so a repeated answer still registers as a new gesture.
-    await page.evaluate(() => window.__omni.clear());
-    await expect(page.getByTestId('gesture')).toContainText('Show a hand');
-    await page.evaluate((n) => window.__omni.fingers(n), answer);
-    // Streak points 1 + 2 + 3 (AP) → score 1, 3, 6.
-    await expect(page.getByTestId('exercise-score')).toHaveText(String((round * (round + 1)) / 2));
-  }
+  const text = page.getByTestId('ar-note-text');
+
+  await gesture(page, 'peace', 'Peace');
+  await expect(page.getByTestId('ar-note')).toBeVisible();
+  await expect(page.getByTestId('activity')).toContainText('Peace → 📝 Take a note');
+  await say(page, 'hello world');
+  await expect(text).toContainText('Hello world');
+
+  await gesture(page, 'point', 'Pointing');
+  await say(page, 'second line');
+  await expect(text).toContainText('Second line');
+
+  await gesture(page, 'thumbs_down', 'Thumbs down');
+  await expect(text).not.toContainText('Second line');
+
+  await gesture(page, 'fist', 'Fist');
+  await expect(page.getByTestId('twin-says')).toContainText('Saved');
+
+  await gesture(page, 'rock', 'Rock on');
+  await expect(page.getByTestId('ar-sticky')).toHaveCount(1);
+  await say(page, 'buy stamps');
+  await expect(page.getByTestId('ar-sticky')).toContainText('Buy stamps');
+
+  await page.waitForTimeout(1600); // per-gesture cooldown
+  await gesture(page, 'fist', 'Fist');
+  await gesture(page, 'call_me', 'Call me');
+  await expect(page.getByTestId('twin-says')).toContainText('📖 Buy stamps');
 });
 
-test('breathing exercise follows open palm / fist', async ({ page }) => {
+test('voice and gesture inputs are detached: switch each off, remap a gesture', async ({ page }) => {
   await open(page);
-  await say(page, 'start breathing');
-  await expect(page.getByTestId('exercise-prompt')).toContainText('Breathe in');
-  await page.evaluate(() => window.__omni.pose('open_palm'));
-  await expect(page.getByTestId('exercise-prompt')).toContainText('Breathe out', { timeout: 6000 });
-  await page.evaluate(() => window.__omni.pose('fist'));
-  await expect(page.getByTestId('twin-says')).toContainText('Breath 1 complete');
+  await page.getByTestId('tab-gestures').click();
+
+  await page.getByTestId('gesture-actions').uncheck();
+  await gesture(page, 'peace', 'Peace');
+  await expect(page.getByTestId('ar-note')).toHaveCount(0);
+
+  await page.getByTestId('gesture-actions').check();
+  await page.getByTestId('map-peace').selectOption('bulb-toggle');
+  await gesture(page, 'peace', 'Peace');
+  await expect(page.getByTestId('bulb-wash')).toBeVisible();
+  await expect(page.getByTestId('last-gesture-action')).toContainText('Digital bulb');
+
+  await page.getByTestId('voice-actions').uncheck();
+  await speak(page, 'take a note');
+  await expect(page.getByTestId('ar-note')).toHaveCount(0);
+  await page.getByTestId('voice-actions').check();
+  await speak(page, 'take a note');
+  await expect(page.getByTestId('ar-note')).toBeVisible();
+
+  // The mapping is a saved preference.
+  await page.reload();
+  await page.getByTestId('ar-start').click();
+  await page.getByTestId('tab-gestures').click();
+  await expect(page.getByTestId('map-peace')).toHaveValue('bulb-toggle');
+});
+
+test('exercises are gone', async ({ page }) => {
+  await open(page);
+  await expect(page.getByTestId('tab-train')).toHaveCount(0);
+  await say(page, 'start finger math');
+  await expect(page.getByTestId('twin-says')).toContainText("didn't catch");
 });
 
 test('digital bulb: toggle, brightness, tone, ring light and torch fallback', async ({ page }) => {
@@ -123,6 +241,7 @@ test('voice/typed commands drive the Omni O(1) engine', async ({ page }) => {
 
 test('AR twin automates a task and waits only for the human step', async ({ page }) => {
   await open(page, { taskSpeed: 20 });
+  await page.getByTestId('tab-tasks').click();
   await expect(page.getByTestId('twin-idle')).toBeVisible();
   await page.getByTestId('assign-hydrate').click();
   await expect(page.getByTestId('active-task')).toContainText('Hydration');
@@ -250,6 +369,7 @@ test('3D Web AR works in a desktop browser: twin stands on an open palm and can 
 
 test('whole-app JSON backup exported on one browser restores on another', async ({ page, browser }) => {
   await open(page, { twinName: 'Nova', taskSpeed: 20 });
+  await page.getByTestId('tab-tasks').click();
   await page.getByTestId('assign-hydrate').click();
   await expect(page.getByTestId('confirm-human')).toBeVisible();
   await page.getByTestId('confirm-human').click();

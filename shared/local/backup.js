@@ -1,4 +1,4 @@
-// One-file app backup: everything the app keeps, as a single JSON document you
+// One-file app backup: everything the app keeps (including voice notes), as a single JSON document you
 // can export on one device and import on another. No server involved.
 //
 // The private key is only ever included as an Omni ID bundle that is already
@@ -9,6 +9,7 @@ import { verifyRegistration } from '../security/arVerify.js';
 import { verifyPassport, BUNDLE_SCHEMA } from '../identity/omniId.js';
 import { TASK_TEMPLATES } from '../automation/tasks.js';
 import { verifyReceipt, RECEIPT_SCHEMA } from './receipt.js';
+import { sanitizeNotes } from '../notes/notes.js';
 
 export const BACKUP_SCHEMA = 'omni-app-backup/1';
 export const MAX_BACKUP_BYTES = 2_000_000;
@@ -21,7 +22,6 @@ export function sanitizeStats(s = {}) {
     tasksDone: count(s.tasksDone),
     glasses: count(s.glasses),
     detoxMs: count(s.detoxMs),
-    breaths: count(s.breaths),
   };
 }
 
@@ -36,7 +36,7 @@ export function sanitizeHistory(list = []) {
     });
 }
 
-export function buildBackup({ prefs, stats, history = [], registry = null, receipt = null, passport = null, identityBundle = null, now = new Date(), appVersion = '1.0.0' }) {
+export function buildBackup({ prefs, stats, history = [], notes = [], registry = null, receipt = null, passport = null, identityBundle = null, now = new Date(), appVersion = '1.0.0' }) {
   return {
     schema: BACKUP_SCHEMA,
     app: 'omni-ar-twin',
@@ -45,6 +45,7 @@ export function buildBackup({ prefs, stats, history = [], registry = null, recei
     prefs: sanitizePrefs(prefs),
     stats: sanitizeStats(stats),
     history: sanitizeHistory(history),
+    notes: sanitizeNotes(notes),
     registration: registry ? { registry, receipt } : null,
     identity: passport ? { passport, bundle: identityBundle } : null,
   };
@@ -70,6 +71,7 @@ export async function parseBackup(input, { trustedKeys }) {
     prefs: sanitizePrefs(data.prefs),
     stats: sanitizeStats(data.stats),
     history: sanitizeHistory(data.history),
+    notes: sanitizeNotes(data.notes),
     registry: null,
     receipt: null,
     passport: null,
