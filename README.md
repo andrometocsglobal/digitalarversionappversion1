@@ -104,4 +104,5 @@ tests/unit, tests/e2e
 - The Omni quantities are classical (Faulhaber, Euler–Maclaurin, Hurwitz ζ). What's new is the unified engine, the shared μ-library and the verified constant-time packaging. The fast HP path is double precision, with about 1e-15 relative error.
 - 3D Web AR anchors to your hands and face, not to room surfaces. Surface-anchored AR needs ARCore (Android + Chrome), because browsers on laptops and iPhones don't expose surface tracking.
 - The twin automates only what happens inside the app. With no server, nothing syncs automatically: use the JSON export and import.
+- Voice recognition comes from the browser's Web Speech API (Chrome, Edge, Android Chrome, recent Safari). In Chrome and Edge the audio is sent to the vendor's speech service for transcription. Notes, camera, hands and face stay on the device. Switch off *voice → action* to keep the microphone off.
 - Wellness tips are general guidance, not medical advice.

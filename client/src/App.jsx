@@ -1043,7 +1043,12 @@ export default function App() {
                 that, 🤘 sticky note, 🤙 read it back, 👍 done. Show an open palm and {prefs.twinName} stands on it.
               </p>
               <h3>Privacy</h3>
-              <p className="muted">Everything runs in your browser — there is no server. Camera, hand and face processing never leave the device; your data moves only when you export a JSON file (Data tab).</p>
+              <p className="muted">
+                This app has no server. Camera, hand and face processing never leave the device, and your notes and data move only when you export a JSON file
+                (Data tab). One exception you should know: voice recognition is provided by your browser — in Chrome and Edge the microphone audio is sent
+                to the browser vendor's speech service to be transcribed. Turn off “Voice → action” in the Gestures tab to keep the microphone off and use
+                gestures or typing instead.
+              </p>
               <h3>AR on every device</h3>
               <p className="muted">3D Web AR runs in any browser with a camera — laptop, desktop, iPhone or Android. Show an open palm and {prefs.twinName} stands on it; click or tap the video to place it; double-click to release it.</p>
               <h3>Room-scale AR (ARCore)</h3>

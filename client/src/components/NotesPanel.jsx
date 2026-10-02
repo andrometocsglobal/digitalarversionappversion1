@@ -23,7 +23,7 @@ export default function NotesPanel({ notes, active, dictating, listening, twinNa
       <h2 id="notes-h">Voice notes</h2>
       <p className="muted">
         Say “take a note”, “new document called …” or “yellow sticky note …” and {twinName} writes it in the AR view as you speak — no Send
-        button. Everything stays on this device.
+        button. Notes are saved only on this device (your browser's speech recognition may process the audio — see Help).
       </p>
 
       <div className="button-row">
